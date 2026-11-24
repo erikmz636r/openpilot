@@ -10,13 +10,13 @@ BO_ 438 PRO_PILOT: 8 XXX
  SG_ CRUISE_ACTIVATED : 38|1@0+ (1,0) [0|3] "" XXX
  SG_ CRUISE_ON : 36|1@0+ (1,0) [0|255] "" XXX
  SG_ STEER_STATUS : 51|1@0+ (1,0) [0|3] "" XXX
- SG_ PROPILOT_DRIVE_TORQUE : 0|12@1- (1,0) [-2048|2047] "counts" XXX
- SG_ PROPILOT_DRIVE_TORQUE_INV : 12|12@1+ (1,0) [0|4095] "" XXX
+ SG_ PROPILOT_DRIVE_TORQUE : 7|12@0- (1,0) [-2048|2047] "counts" XXX
+ SG_ PROPILOT_DRIVE_TORQUE_INV : 23|12@0+ (1,0) [0|4095] "" XXX
  SG_ PROPILOT_DRIVE_TORQUE_SMOOTH : 56|8@1+ (1,0) [0|255] "counts" XXX
  SG_ PROPILOT_BYTE4 : 32|8@1+ (1,0) [0|255] "" XXX
 
-CM_ SG_ 438 PROPILOT_DRIVE_TORQUE "HIGH CONFIDENCE. Rogue bus 1, about 100 Hz. Signed 12-bit little-endian bits 0-11. Raw counts, not Nm. Idle near 0, cruise about +85 at 20 mph to +297 at 60 mph, coast about -144, exactly -500 means no drive torque.";
-CM_ SG_ 438 PROPILOT_DRIVE_TORQUE_INV "HIGH CONFIDENCE. Bits 12-23 are the bitwise inverse of the raw 12-bit counts. Passed on 100 percent of 300576 frames.";
+CM_ SG_ 438 PROPILOT_DRIVE_TORQUE "HIGH CONFIDENCE. Rogue bus 1, about 100 Hz. Signed 12-bit Motorola 7|12@0- (X = byte0<<4 | byte1>>4). Raw counts, not Nm. Idle near 0, cruise about +85 at 20 mph to +297 at 60 mph, coast about -144, exactly -500 means no drive torque.";
+CM_ SG_ 438 PROPILOT_DRIVE_TORQUE_INV "HIGH CONFIDENCE. Motorola 23|12@0+ (INV = byte2<<4 | byte3>>4) is the bitwise inverse of the raw 12-bit counts. Passed on 100 percent of 300576 frames.";
 CM_ SG_ 438 PROPILOT_DRIVE_TORQUE_SMOOTH "Byte 7. Smoothed ramp of the same request, raw counts. Not 1:1 with the 12-bit value. While engaged, bus 0 0x15A is about 3.14 times this byte.";
 CM_ SG_ 438 PROPILOT_BYTE4 "Raw byte 4. Disengaged 0x13, engaged 0x53, so bit 6 flips. PROVISIONAL as an engaged flag.";
 CM_ SG_ 438 CRUISE_ACTIVATED "PROVISIONAL engaged flag. Byte 4 bit 6, same as this upstream bit. Seen as the 0x13 to 0x53 transition.";
