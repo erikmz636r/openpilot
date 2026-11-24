@@ -295,3 +295,43 @@ def test_carcontroller_error_turns_icbm_off_and_keeps_steering():
   _, sends = ci.apply(CC, 1_010_000_000)
   assert any(addr == 0x169 for addr, _, _ in sends)
   assert not any(addr == 0x20B for addr, _, _ in sends)
+
+
+def test_in_curve_wobble_does_not_bounce():
+  # Curve target wobbling 2.5 mph inside a curve: down once, no RES back up while the curve lasts.
+  car = FakeRogue(MODE_ACTIVE)
+  settle(car)
+  car.run(6, target=50)
+  assert car.set_mph == 50
+  for _ in range(4):
+    car.run(2.0, target=52.5)
+    car.run(2.0, target=49.8)
+  assert car.presses("RES_BUTTON") == 0
+  assert 49 <= car.set_mph <= 50
+
+
+def test_taps_start_at_once_when_set_is_above_actual_speed():
+  # Set 60, car only doing 50 (e.g. ProPILOT already slower): taps above actual speed do not slow the
+  # car, so the first SET starts on the next car frame instead of after the deadband wait.
+  car = FakeRogue(MODE_ACTIVE, v_mph=50.0)
+  settle(car)
+  t0 = car.t
+  car.run(0.1, target=45)
+  first = next(t for t, b, _ in car.sent if b == "SET_BUTTON")
+  assert first - t0 <= 50_000_000
+  # at actual speed the deadband wait still applies
+  car = FakeRogue(MODE_ACTIVE, v_mph=60.0)
+  settle(car)
+  t0 = car.t
+  car.run(1, target=55)
+  first = next(t for t, b, _ in car.sent if b == "SET_BUTTON")
+  assert first - t0 >= 250_000_000
+
+
+def test_no_taps_while_unexpected_change_is_checked():
+  car = FakeRogue(MODE_ACTIVE, v_mph=50.0)
+  settle(car)
+  car.set_mph = 63  # changed without any button we saw, curve target below it
+  car.run(1, target=45)
+  assert car.icbm.status.state == State.FAULT
+  assert car.sent == []

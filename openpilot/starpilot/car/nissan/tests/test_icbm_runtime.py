@@ -73,3 +73,35 @@ def test_fill_rogue_icbm_handles_inf_and_round_trips():
 def test_configure_never_raises():
   bad = NS(CP=NS(carFingerprint="NISSAN_ROGUE"), CI=NS(CC=NS(icbm=IcbmController())), params=None)
   assert rt.configure(bad, []) is None
+
+
+def test_lookahead_uses_whole_model_plan():
+  # A tight curve 9 s ahead (past the old 8 s window) already gives a target.
+  v = 25.0
+  r, t_bind = rt.curve_target_ms(v, [i * 0.25 for i in range(41)], [v * i * 0.25 for i in range(41)], [v] * 41,
+                                 [v / 50.0 if i * 0.25 >= 9.0 else 0.0 for i in range(41)])
+  assert t_bind >= 9.0 and r * rt.MS_TO_MPH < 60
+
+
+def test_reaction_time_counts_taps_above_actual_speed():
+  assert rt.reaction_time(20.0, 0) == rt.REACTION_S
+  assert abs(rt.reaction_time(20.0, 20.0 * rt.MS_TO_MPH) - rt.BASE_REACTION_S) < 1e-6
+  assert abs(rt.reaction_time(20.0, 20.0 * rt.MS_TO_MPH + 3.8) - (rt.BASE_REACTION_S + 1.0)) < 1e-6
+  assert rt.reaction_time(20.0, 200.0) == rt.REACTION_MAX_S
+
+
+def test_target_fast_down_slow_up_and_straight_is_no_limit():
+  p = rt.CurvePlanner()
+  now = 1_000_000_000
+  p.update(25.0, model_msg(), now, True, True)
+  for _ in range(100):  # 1 s into a sharp curve: target falls by >= 10 mph/s (not the old 2-4)
+    now += 10_000_000
+    target = p.update(25.0, model_msg(radius=60.0, curve_start_m=40.0), now, True, True)
+  assert target < 25.0 * rt.MS_TO_MPH + rt.TARGET_ABOVE_SPEED_MPH - 9.5
+  low = target
+  for _ in range(50):  # curve loosens: comes back up at most TARGET_UP_MPH_S
+    now += 10_000_000
+    target = p.update(25.0, model_msg(radius=150.0, curve_start_m=40.0), now, True, True)
+  assert target <= low + rt.TARGET_UP_MPH_S * 0.5 + 0.01
+  now += 10_000_000
+  assert p.update(25.0, model_msg(), now, True, True) == math.inf  # straight: no limit right away

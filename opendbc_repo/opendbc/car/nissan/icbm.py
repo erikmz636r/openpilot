@@ -51,9 +51,15 @@ ALERT_NS = 6_000_000_000
 
 # Deadbands (display mph) so the set speed does not bounce around the target.
 DOWN_ERR_MPH = 1.5
-DOWN_HOLD_NS = 500_000_000
+DOWN_HOLD_NS = 250_000_000     # was 500 ms: start slowing for a curve sooner
 UP_ERR_MPH = 2.0
 UP_HOLD_NS = 1_500_000_000
+# While a curve is still ahead/under us, going back up needs a clearly higher target for longer
+# (anti-bounce: the model's curve estimate wobbles a couple of mph inside a curve).
+IN_CURVE_UP_ERR_MPH = 3.0
+IN_CURVE_UP_HOLD_NS = 2_500_000_000
+# Set speed above actual speed: taps there do not slow the car yet, so do not wait on the deadband.
+ABOVE_SPEED_MPH = 1.0
 UP_OVER_SPEED_MPH = 3.0        # going back up, stay within this of actual speed
 UP_FOLLOW_SPEED_NS = 6_000_000_000
 OVERRIDE_TIGHTER_MPH = 3.0     # after a driver change mid-curve, only a curve this much tighter acts
@@ -370,17 +376,27 @@ class IcbmController:
       direction = 1
     else:
       # Going back up to the driver's own speed finishes the last mph too.
+      # "In a curve" = a curve target is what holds us below the driver's speed right now.
+      in_curve = st.has_target and self.override_target is None and float(self.target_mph) < self.ceiling
       up_err = 1.0 if goal >= self.ceiling else UP_ERR_MPH
+      up_hold = UP_HOLD_NS
+      if in_curve and goal < self.ceiling:
+        up_err, up_hold = max(up_err, IN_CURVE_UP_ERR_MPH), IN_CURVE_UP_HOLD_NS
+      # A curve target below a set speed that is above actual speed: those first taps do not slow
+      # the car at all yet, so start right away (still one mph per tap, still the deadband to stop).
+      down_now = in_curve and err <= -DOWN_ERR_MPH and current >= c.v_ego * MS_TO_MPH + ABOVE_SPEED_MPH
       want = -1 if err <= -DOWN_ERR_MPH else (1 if err >= up_err else 0)
       if want != 0 and want == self.err_dir:
-        hold = DOWN_HOLD_NS if want < 0 else UP_HOLD_NS
-        if now - self.err_since_ns >= hold:
+        hold = DOWN_HOLD_NS if want < 0 else up_hold
+        if now - self.err_since_ns >= hold or (want < 0 and down_now):
           direction = want
       else:
         self.err_dir = want
         self.err_since_ns = now
     if direction < 0 and current <= MIN_SET_MPH:
       direction = 0
+    if self.unexpected_since_ns != 0:
+      direction = 0  # the car's set speed changed without us: never tap over it while that is checked
     if direction > 0 and current >= self.ceiling:
       direction = 0
 

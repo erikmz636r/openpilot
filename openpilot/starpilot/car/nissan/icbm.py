@@ -14,18 +14,27 @@ from openpilot.starpilot.car.nissan.icbm_settings import ICBM_ACTIVE, ICBM_OFF, 
 MS_TO_MPH = 2.2369362920544
 
 # Curve speed (idea after sunnypilot's vision curve controller, MIT): lateral accel the model
-# predicts along its path, the speed that keeps it at A_LAT_COMFORT, and how fast we must start
-# slowing so stock ProPILOT (about -0.85 m/s^2 for a lowered set speed) gets there in time.
+# predicts along its path, the speed that keeps it at A_LAT_COMFORT, and where we must start
+# slowing so stock ProPILOT gets there in time. A lowered set speed makes ProPILOT brake at about
+# SET_BRAKE_DECEL at most, so we plan with PLAN_DECEL (a margin under it), and add the time the
+# taps need before ProPILOT starts braking (BASE_REACTION_S plus one tap per mph the set speed is
+# above actual speed: those taps do not slow the car yet).
 A_LAT_COMFORT = 1.9        # m/s^2
-PLAN_DECEL = 0.7           # m/s^2, a bit under what ProPILOT does per lowered mph
-REACTION_S = 1.5           # taps + ProPILOT response
+SET_BRAKE_DECEL = 0.85     # m/s^2, most ProPILOT does for a lowered set speed (measured)
+PLAN_DECEL = 0.6           # m/s^2, planned with margin under SET_BRAKE_DECEL
+BASE_REACTION_S = 0.8      # first tap + ProPILOT starting to brake
+TAPS_PER_S = 3.8           # opendbc icbm tap shape (5 + 8 car frames at 50 Hz)
+REACTION_MAX_S = 3.0
+REACTION_S = 1.5           # default when the set speed is not known
 MIN_CURVATURE = 1e-4
-MAX_LOOKAHEAD_S = 8.0
+MAX_LOOKAHEAD_S = 10.0     # the model's whole plan (modelV2 position.t runs to 10 s)
 MIN_ACTIVE_SPEED = 8.0     # m/s; below this no curve target (city turns are the driver's)
 
-TARGET_DOWN_MPH_S = 2.0
-TARGET_DOWN_FAST_MPH_S = 4.0  # curve binding within FAST_WINDOW_S
+# Smoothed target: fast down (react to a curve the moment the model shows it), slow up (anti-bounce).
+TARGET_DOWN_MPH_S = 10.0
+TARGET_DOWN_FAST_MPH_S = 15.0  # curve binding within FAST_WINDOW_S
 FAST_WINDOW_S = 3.0
+TARGET_UP_MPH_S = 2.0
 TARGET_ABOVE_SPEED_MPH = 5.0
 MODEL_MAX_AGE_NS = 250_000_000
 
@@ -51,6 +60,15 @@ def curve_target_ms(v_ego: float, t: list[float], pos_x: list[float], vel_x: lis
   return float(v_now[i]), float(t_a[keep][i])
 
 
+def reaction_time(v_ego: float, set_mph: float) -> float:
+  """Seconds before ProPILOT starts braking: first tap + response, plus a tap for every mph the set
+  speed is above actual speed (those taps do not slow the car)."""
+  if not set_mph or not math.isfinite(set_mph):
+    return REACTION_S
+  above = max(0.0, float(set_mph) - v_ego * MS_TO_MPH)
+  return min(BASE_REACTION_S + above / TAPS_PER_S, REACTION_MAX_S)
+
+
 class CurvePlanner:
   """Slew-limited curve target in display mph (None while there is no usable model).
 
@@ -62,20 +80,21 @@ class CurvePlanner:
     self.raw_ms = math.inf
     self.t_bind = math.inf
 
-  def observe_model(self, v_ego: float, model) -> None:
+  def observe_model(self, v_ego: float, model, reaction_s: float = REACTION_S) -> None:
     # modelV2 has no top-level t: the time axis lives in each XYZTData (position.t).
     pos = model.position
     self.raw_ms, self.t_bind = curve_target_ms(v_ego, list(pos.t), list(pos.x), list(model.velocity.x),
-                                               list(model.orientationRate.z))
+                                               list(model.orientationRate.z), reaction_s=reaction_s)
 
-  def update(self, v_ego: float, model, now_ns: int, model_ok: bool, model_new: bool = True) -> float | None:
+  def update(self, v_ego: float, model, now_ns: int, model_ok: bool, model_new: bool = True,
+             set_mph: float = 0.0) -> float | None:
     if not model_ok:
       self.target_mph = None
       self.last_ns = now_ns
       self.raw_ms, self.t_bind = math.inf, math.inf
       return None
     if model_new or self.target_mph is None:
-      self.observe_model(v_ego, model)
+      self.observe_model(v_ego, model, reaction_time(v_ego, set_mph))
     raw_ms = self.raw_ms if v_ego >= MIN_ACTIVE_SPEED else math.inf
     # Never let a straight-road value run far above actual speed, or the slew would need seconds
     # to come back down when a curve shows up.
@@ -86,15 +105,18 @@ class CurvePlanner:
       # Start from actual speed so a fresh start never jumps the target down at once.
       self.target_mph = max(raw, v_ego * MS_TO_MPH)
     down = TARGET_DOWN_FAST_MPH_S if self.t_bind <= FAST_WINDOW_S else TARGET_DOWN_MPH_S
+    cap = v_ego * MS_TO_MPH + TARGET_ABOVE_SPEED_MPH
+    if raw >= cap - 0.01:
+      # No curve limits us at all: "no limit" right away (a lagging target would look like a curve
+      # while ProPILOT accelerates), and a slower car ahead never pulls the set speed down.
+      self.target_mph = raw
+      return math.inf
     if raw < self.target_mph:
       self.target_mph = max(raw, self.target_mph - down * dt)
     else:
-      # Up is immediate here: the controller already returns gently (1.5 s wait, <= actual speed + 3 mph,
-      # one mph per tap). A lagging target would look like a curve while ProPILOT accelerates.
-      self.target_mph = raw
-    # At the cap there is no curve limiting us: report "no limit" so a slower car ahead (ProPILOT
-    # following a lead) never pulls the set speed down.
-    if self.target_mph >= v_ego * MS_TO_MPH + TARGET_ABOVE_SPEED_MPH - 0.01:
+      # Still in/near a curve: come back up slowly so model wobble does not bounce the set speed.
+      self.target_mph = min(raw, self.target_mph + TARGET_UP_MPH_S * dt)
+    if self.target_mph >= cap - 0.01:
       return math.inf
     return self.target_mph
 
@@ -133,7 +155,9 @@ class IcbmRuntime:
       model_ok = bool(self.sm.seen['modelV2'] and self.sm.valid['modelV2'] and
                       0 <= int(now_ns) - int(self.sm.logMonoTime['modelV2']) <= MODEL_MAX_AGE_NS)
       model_new = bool(self.sm.updated['modelV2'])
-      target = self.planner.update(float(cs.vEgo), self.sm['modelV2'] if model_ok else None, int(now_ns), model_ok, model_new)
+      set_mph = float(getattr(controller.status, "set_mph", 0) or 0)
+      target = self.planner.update(float(cs.vEgo), self.sm['modelV2'] if model_ok else None, int(now_ns), model_ok,
+                                   model_new, set_mph)
       controller.set_target(target, int(now_ns))
     except Exception:
       disable(card, "runtime update")
