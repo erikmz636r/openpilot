@@ -9,6 +9,7 @@ from openpilot.system.ui.lib.application import gui_app
 from openpilot.selfdrive.ui.layouts.settings.common import restart_needed_callback
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.starpilot.car.hyundai.aol import ioniq6_alpha_long_available
+from openpilot.starpilot.car.nissan import icbm_settings as icbm_s
 from openpilot.starpilot.car.nissan.icbm_settings import (ICBM_KEY, ICBM_MICI_DESCRIPTION, ICBM_MICI_OPTIONS, ICBM_MICI_TITLE,
                                                         read_mode as read_icbm_mode)
 from openpilot.starpilot.car.ford.longitudinal_preferences import release_long_available as ford_release_long_available
@@ -142,6 +143,13 @@ class DeveloperLayoutMici(NavScroller):
     )
     self._icbm_toggle = _IcbmModeToggle(ICBM_MICI_TITLE, ICBM_KEY, ICBM_MICI_OPTIONS, description=ICBM_MICI_DESCRIPTION)
     self._icbm_toggle.set_enabled(lambda: ui_state.is_offroad())
+    self._icbm_feature_toggles = [
+      BigParamControl(title, key, description=desc + icbm_s.ICBM_MICI_NOTE)
+      for key, title, desc in ((icbm_s.ICBM_LIMIT_KEY, icbm_s.ICBM_LIMIT_MICI_TITLE, "Lowers set speed to the posted limit when known."),
+                               (icbm_s.ICBM_STOPS_KEY, icbm_s.ICBM_STOPS_MICI_TITLE, "Eases off toward 20 mph for a red light / stop ahead."))
+    ]
+    for item in self._icbm_feature_toggles:
+      item.set_enabled(lambda: ui_state.is_offroad())
     self._debug_mode_toggle = BigParamControl("ui debug mode", "ShowDebugInfo",
                                               toggle_callback=lambda checked: (gui_app.set_show_touches(checked), gui_app.set_show_fps(checked)),
                                               description="Show touch locations and the UI frame rate.")
@@ -160,6 +168,7 @@ class DeveloperLayoutMici(NavScroller):
       self._debug_mode_toggle,
       self._propilot_long_toggle,
       self._icbm_toggle,
+      *self._icbm_feature_toggles,
       self._navigation_toggle,
       self._cellular_off_toggle,
     ])
@@ -173,6 +182,7 @@ class DeveloperLayoutMici(NavScroller):
       (HOLD_KEY, self._always_hold_toggle),
       ("ShowDebugInfo", self._debug_mode_toggle),
       ("NissanProPilotLongDebug", self._propilot_long_toggle),
+      *((item.param, item) for item in self._icbm_feature_toggles),
       ("NavigationEnabled", self._navigation_toggle),
       ("CellularDisabled", self._cellular_off_toggle),
     )
@@ -224,7 +234,7 @@ class DeveloperLayoutMici(NavScroller):
       try:
         raw = ui_state.params.get_bool(key)
       except UnknownKeyName:
-        if key != "NissanProPilotLongDebug":
+        if key != "NissanProPilotLongDebug" and not key.startswith("NissanRogueIcbm"):
           raise
         raw = False
       value = (not stock_long_requested(ui_state.params) if key == "AlphaLongitudinalEnabled" and meb_settings_capable(ui_state.CP)

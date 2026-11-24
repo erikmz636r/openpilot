@@ -335,3 +335,40 @@ def test_no_taps_while_unexpected_change_is_checked():
   car.run(1, target=45)
   assert car.icbm.status.state == State.FAULT
   assert car.sent == []
+
+
+def test_in_curve_needs_bigger_sustained_rise_before_res():
+  # 4 mph wobble held 3 s inside a curve: still no RES (needs > 5 mph held 4 s).
+  car = FakeRogue(MODE_ACTIVE)
+  settle(car)
+  car.run(6, target=50)
+  for _ in range(3):
+    car.run(3.0, target=54.0)
+    car.run(1.0, target=50.0)
+  assert car.presses("RES_BUTTON") == 0
+
+
+def test_speed_scale_post_curve_recovery_on_car_scale():
+  # vEgo reads 12% low (car scale = vEgo * 1.14). After a curve the climb back follows real speed,
+  # so with the scale set the set speed returns to the car's real speed + 3, not vEgo + 3.
+  car = FakeRogue(MODE_ACTIVE, set_mph=60)
+  settle(car)
+  car.icbm.set_speed_scale(1.14)
+  car.v = 40 / 1.14 * MPH  # really doing 40
+  car.run(8, target=40)
+  assert car.set_mph == 40
+  car.v = 41 / 1.14 * MPH  # really 41
+  car.run(5, target=60)
+  assert 43 <= car.set_mph <= 44
+
+
+def test_winding_road_brief_gap_between_bends_no_res():
+  # Bend, 2 s with no curve target (straight bit), next bend: no RES in the gap (down-up-down).
+  car = FakeRogue(MODE_ACTIVE, set_mph=60)
+  settle(car)
+  car.v = 50 * MPH
+  car.run(6, target=50)
+  assert car.set_mph == 50
+  car.run(2.0, target=float('inf'))
+  car.run(4, target=50)
+  assert car.presses("RES_BUTTON") == 0

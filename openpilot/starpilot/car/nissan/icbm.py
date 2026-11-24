@@ -9,7 +9,9 @@ import math
 
 import numpy as np
 
-from openpilot.starpilot.car.nissan.icbm_settings import ICBM_ACTIVE, ICBM_OFF, ICBM_WATCH, read_mode
+from openpilot.starpilot.car.nissan.icbm_settings import (FEATURE_LIMIT, FEATURE_STOPS, ICBM_ACTIVE, ICBM_OFF,
+                                                        ICBM_WATCH, read_features, read_limit_offset, read_mode)
+from openpilot.starpilot.car.nissan.icbm_targets import LIMIT_FRESH_NS, LimitPlanner, SpeedScale, StopPlanner
 
 MS_TO_MPH = 2.2369362920544
 
@@ -22,7 +24,7 @@ MS_TO_MPH = 2.2369362920544
 A_LAT_COMFORT = 1.9        # m/s^2
 SET_BRAKE_DECEL = 0.85     # m/s^2, most ProPILOT does for a lowered set speed (measured)
 PLAN_DECEL = 0.6           # m/s^2, planned with margin under SET_BRAKE_DECEL
-BASE_REACTION_S = 0.8      # first tap + ProPILOT starting to brake
+BASE_REACTION_S = 1.6      # first tap + ProPILOT starting to brake (~1.5 s lag measured, seg 23)
 TAPS_PER_S = 3.8           # opendbc icbm tap shape (5 + 8 car frames at 50 Hz)
 REACTION_MAX_S = 3.0
 REACTION_S = 1.5           # default when the set speed is not known
@@ -111,6 +113,12 @@ class CurvePlanner:
       # while ProPILOT accelerates), and a slower car ahead never pulls the set speed down.
       self.target_mph = raw
       return math.inf
+    if self.target_mph >= cap - 0.01:
+      # A curve just showed up: start the slew at actual speed, not at the "no curve" cap above it.
+      # Never below raw, so a target between actual speed and the cap lands exactly where it did
+      # before, only without the slew delay (a set speed above actual speed still is not lowered
+      # by a curve that allows more than actual speed).
+      self.target_mph = max(raw, v_ego * MS_TO_MPH)
     if raw < self.target_mph:
       self.target_mph = max(raw, self.target_mph - down * dt)
     else:
@@ -138,29 +146,91 @@ def disable(card, where: str) -> None:
 
 
 class IcbmRuntime:
-  def __init__(self, mode: int, sm=None):
+  """features: bitmask of opt-in extras (FEATURE_LIMIT / FEATURE_STOPS), Active only."""
+
+  def __init__(self, mode: int, sm=None, features: int = 0, limit_offset_mph: int = 0):
+    self.features = int(features) & (FEATURE_LIMIT | FEATURE_STOPS)
     if sm is None:
       from openpilot.cereal import messaging
-      sm = messaging.SubMaster(['modelV2'])
+      services = ['modelV2']
+      if self.features & FEATURE_STOPS:
+        services.append('radarState')  # only to tell a red light from a car stopped ahead
+      if self.features & FEATURE_LIMIT:
+        services.append('slcState')
+      sm = messaging.SubMaster(services)
     self.mode = mode
     self.sm = sm
     self.planner = CurvePlanner()
+    self.scale = SpeedScale()
+    self.limit = LimitPlanner(limit_offset_mph)
+    self.stops = StopPlanner()
+    self.stop_t = math.inf
+    self.prev_car_set = 0
+
+  def _driver_raised(self, st) -> bool:
+    """The driver pushed the car's set speed up himself (RES+/SET+ while we were yielding to him)."""
+    car_set = int(getattr(st, 'car_set_mph', 0) or 0)
+    raised = int(getattr(st, 'state', 0)) == 2 and self.prev_car_set > 0 and car_set > self.prev_car_set  # 2 = YIELD
+    self.prev_car_set = car_set
+    return raised
+
+  def _fresh(self, name: str, now_ns: int, max_age_ns: int) -> bool:
+    return bool(self.sm.seen[name] and self.sm.valid[name] and 0 <= int(now_ns) - int(self.sm.logMonoTime[name]) <= max_age_ns)
 
   def update(self, card, cs, cc, now_ns: int) -> None:
     try:
       controller = getattr(card.CI.CC, "icbm", None)
       if controller is None or controller.mode == ICBM_OFF:
         return
+      now = int(now_ns)
       self.sm.update(0)
-      model_ok = bool(self.sm.seen['modelV2'] and self.sm.valid['modelV2'] and
-                      0 <= int(now_ns) - int(self.sm.logMonoTime['modelV2']) <= MODEL_MAX_AGE_NS)
+      model_ok = self._fresh('modelV2', now, MODEL_MAX_AGE_NS)
       model_new = bool(self.sm.updated['modelV2'])
+      model = self.sm['modelV2'] if model_ok else None
+      v_ego = float(cs.vEgo)
+      if model_ok and model_new:
+        vx = list(model.velocity.x)
+        if vx:
+          self.scale.update(v_ego, float(vx[0]), 0.05)
+      scale = self.scale.scale
+      controller.set_speed_scale(scale)
+      v = v_ego * scale  # car scale (set speed, model)
       set_mph = float(getattr(controller.status, "set_mph", 0) or 0)
-      target = self.planner.update(float(cs.vEgo), self.sm['modelV2'] if model_ok else None, int(now_ns), model_ok,
-                                   model_new, set_mph)
-      controller.set_target(target, int(now_ns))
+      target = self.planner.update(v, model, now, model_ok, model_new, set_mph)
+      st = controller.status
+      st.features = self.features
+      st.curve_target_mph = _finite_or0(target)
+      if self.features:
+        if self._driver_raised(st):
+          # Driver override: keep his speed. Limit: until the posted limit changes. Stop ahead: drop
+          # this slow-down (it needs a fresh, cleared-then-seen detection to act again).
+          self.limit.override()
+          self.stops.override(now)
+          self.stop_t = math.inf
+        extra = math.inf
+        if self.features & FEATURE_STOPS:
+          radar_ok = self._fresh('radarState', now, MODEL_MAX_AGE_NS)
+          lead = self.sm['radarState'].leadOne if radar_ok else None
+          if not model_ok or model_new:
+            self.stop_t = self.stops.update(v, model, lead, now, model_ok and radar_ok)
+          extra = min(extra, self.stop_t)
+        if self.features & FEATURE_LIMIT:
+          slc_ok = self._fresh('slcState', now, LIMIT_FRESH_NS)
+          lim_t = self.limit.update(self.sm['slcState'] if slc_ok else None, slc_ok, now, v)
+          st.limit_target_mph = _finite_or0(lim_t)
+          st.limit_mph = int(self.limit.limit)
+          extra = min(extra, lim_t)
+        st.stop_target_mph = _finite_or0(self.stop_t) if self.features & FEATURE_STOPS else 0.0
+        # Extras only act with a usable model too (same freshness gate as curves).
+        if target is not None:
+          target = min(target, extra)
+      controller.set_target(target, now)
     except Exception:
       disable(card, "runtime update")
+
+
+def _finite_or0(x) -> float:
+  return float(x) if x is not None and math.isfinite(x) else 0.0
 
 
 def configure(card, services=None):
@@ -191,14 +261,15 @@ def _configure(card):
   mode = read_mode(card.params)
   if mode == ICBM_OFF or cp.passive or cp.dashcamOnly or cp.openpilotLongitudinalControl or not cp.pcmCruise:
     return None
-  runtime = IcbmRuntime(mode)  # build first: if this fails nothing below has changed
   if mode == ICBM_ACTIVE:
-    from opendbc.car.nissan.values import NissanSafetyFlags
     from opendbc.car.structs import CarParams
     if len(cp.safetyConfigs) != 1 or cp.safetyConfigs[0].safetyModel != CarParams.SafetyModel.nissan:
       mode = ICBM_WATCH
-    else:
-      cp.safetyConfigs[0].safetyParam |= NissanSafetyFlags.ICBM.value
+  features = read_features(card.params) if mode == ICBM_ACTIVE else 0  # extras: Active only
+  runtime = IcbmRuntime(mode, features=features, limit_offset_mph=read_limit_offset(card.params))  # build first
+  if mode == ICBM_ACTIVE:
+    from opendbc.car.nissan.values import NissanSafetyFlags
+    cp.safetyConfigs[0].safetyParam |= NissanSafetyFlags.ICBM.value
   card.CI.CC.icbm.mode = mode
   card.CI.CC.icbm.status.mode = mode
   runtime.mode = mode
@@ -225,3 +296,9 @@ def fill_rogue_icbm(state, status) -> None:
   msg.faultReason = str(status.fault_reason)[:120]
   msg.alert = bool(status.alert)
   msg.sending = bool(status.sending)
+  msg.speedScale = finite(getattr(status, "speed_scale", 1.0))
+  msg.features = int(getattr(status, "features", 0)) & 0xFF
+  msg.curveTargetMph = finite(getattr(status, "curve_target_mph", 0.0))
+  msg.limitTargetMph = finite(getattr(status, "limit_target_mph", 0.0))
+  msg.stopTargetMph = finite(getattr(status, "stop_target_mph", 0.0))
+  msg.limitMph = max(0, min(int(getattr(status, "limit_mph", 0)), 255))

@@ -341,6 +341,9 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"ShowDebugInfo", {PERSISTENT, BOOL}},
     {"NissanProPilotLongDebug", {PERSISTENT, BOOL, "0"}},  // Rogue ProPILOT longitudinal overlay. Display only.
     {"NissanRogueIcbmMode", {PERSISTENT, INT, "0"}},  // Rogue cruise-button control: 0 Off, 1 Watch only, 2 Active. Read at car start.
+    {"NissanRogueIcbmSpeedLimit", {PERSISTENT, BOOL, "0"}},  // Rogue cruise buttons: lower set speed to the posted limit. Active only.
+    {"NissanRogueIcbmSpeedLimitOffset", {PERSISTENT, INT, "0"}},  // mph added to the posted limit (0..10).
+    {"NissanRogueIcbmStops", {PERSISTENT, BOOL, "0"}},  // Rogue cruise buttons: ease off toward 20 mph for a model stop ahead. Active only.
     {"DeveloperSidebar", {PERSISTENT, BOOL, "0"}},
     {"ShowBrakeStatus", {PERSISTENT, BOOL, "0"}},
     {"HideDMIcon", {PERSISTENT, BOOL, "0"}},

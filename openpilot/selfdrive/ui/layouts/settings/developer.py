@@ -3,6 +3,7 @@ from collections.abc import Callable
 from openpilot.common.params import Params, UnknownKeyName
 from openpilot.starpilot.longitudinal.enhanced_stop_hold import KEY as HOLD_KEY, LABEL as HOLD_LABEL, DESCRIPTION as HOLD_DESCRIPTION
 from openpilot.starpilot.car.hyundai.aol import ioniq6_alpha_long_available
+from openpilot.starpilot.car.nissan import icbm_settings as icbm_s
 from openpilot.starpilot.car.nissan.icbm_settings import ICBM_DESCRIPTION, ICBM_KEY, ICBM_TITLE, read_mode as read_icbm_mode
 from openpilot.starpilot.car.ford.longitudinal_preferences import release_long_available as ford_release_long_available
 from opendbc.car.volkswagen.meb_modes import MEB_CARS, settings_capable as meb_settings_capable
@@ -122,6 +123,21 @@ class DeveloperLayout(Widget):
       self._icbm_mode(), callback=self._on_icbm_mode,
     )
     self._icbm_selector.action_item.set_enabled(ui_state.is_offroad)
+    self._icbm_feature_toggles = {}
+    for key, title, desc in ((icbm_s.ICBM_LIMIT_KEY, icbm_s.ICBM_LIMIT_TITLE, icbm_s.ICBM_LIMIT_DESCRIPTION),
+                             (icbm_s.ICBM_STOPS_KEY, icbm_s.ICBM_STOPS_TITLE, icbm_s.ICBM_STOPS_DESCRIPTION)):
+      self._icbm_feature_toggles[key] = toggle_item(
+        lambda title=title: tr(title), description=lambda desc=desc: tr(desc),
+        initial_state=self._icbm_bool(key), callback=lambda state, key=key: self._on_icbm_bool(key, state),
+        enabled=ui_state.is_offroad,
+      )
+    self._icbm_offset_selector = multiple_button_item(
+      lambda: tr(icbm_s.ICBM_LIMIT_OFFSET_TITLE), lambda: tr(icbm_s.ICBM_LIMIT_OFFSET_DESCRIPTION),
+      [lambda o=o: f"+{o}" if o else "0" for o in icbm_s.ICBM_LIMIT_OFFSETS],
+      icbm_s.ICBM_LIMIT_OFFSETS.index(icbm_s.read_limit_offset(self._params)), button_width=150,
+      callback=self._on_icbm_offset,
+    )
+    self._icbm_offset_selector.action_item.set_enabled(ui_state.is_offroad)
     self._on_enable_ui_debug(self._params.get_bool("ShowDebugInfo"))
 
     self._cellular_disabled_toggle = toggle_item(
@@ -145,6 +161,8 @@ class DeveloperLayout(Widget):
       self._ui_debug_toggle,
       self._propilot_long_toggle,
       self._icbm_selector,
+      *self._icbm_feature_toggles.values(),
+      self._icbm_offset_selector,
       self._cellular_disabled_toggle,
     ], line_separator=True, spacing=0)
 
@@ -211,6 +229,11 @@ class DeveloperLayout(Widget):
     icbm_selector = getattr(self, "_icbm_selector", None)
     if icbm_selector is not None:
       icbm_selector.action_item.set_selected_button(self._icbm_mode())
+    for key, item in getattr(self, "_icbm_feature_toggles", {}).items():
+      item.action_item.set_state(self._icbm_bool(key))
+    offset_selector = getattr(self, "_icbm_offset_selector", None)
+    if offset_selector is not None:
+      offset_selector.action_item.set_selected_button(icbm_s.ICBM_LIMIT_OFFSETS.index(icbm_s.read_limit_offset(self._params)))
 
   def _icbm_mode(self) -> int:
     return read_icbm_mode(self._params)
@@ -224,6 +247,29 @@ class DeveloperLayout(Widget):
     except UnknownKeyName:
       pass
     self._icbm_selector.action_item.set_selected_button(self._icbm_mode())
+
+  def _icbm_bool(self, key: str) -> bool:
+    try:
+      return self._params.get_bool(key)
+    except UnknownKeyName:
+      return False
+
+  def _on_icbm_bool(self, key: str, state: bool):
+    if ui_state.is_offroad():
+      try:
+        self._params.put_bool(key, bool(state), block=True)
+      except UnknownKeyName:
+        pass
+    self._icbm_feature_toggles[key].action_item.set_state(self._icbm_bool(key))
+
+  def _on_icbm_offset(self, index: int):
+    offsets = icbm_s.ICBM_LIMIT_OFFSETS
+    if ui_state.is_offroad() and type(index) is int and 0 <= index < len(offsets):
+      try:
+        self._params.put(icbm_s.ICBM_LIMIT_OFFSET_KEY, offsets[index], block=True)
+      except UnknownKeyName:
+        pass
+    self._icbm_offset_selector.action_item.set_selected_button(offsets.index(icbm_s.read_limit_offset(self._params)))
 
   def _on_always_hold(self, state: bool):
     if ui_state.is_offroad():

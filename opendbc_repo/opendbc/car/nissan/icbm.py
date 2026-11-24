@@ -56,8 +56,9 @@ UP_ERR_MPH = 2.0
 UP_HOLD_NS = 1_500_000_000
 # While a curve is still ahead/under us, going back up needs a clearly higher target for longer
 # (anti-bounce: the model's curve estimate wobbles a couple of mph inside a curve).
-IN_CURVE_UP_ERR_MPH = 3.0
-IN_CURVE_UP_HOLD_NS = 2_500_000_000
+IN_CURVE_UP_ERR_MPH = 5.0        # was 3.0: a 4.6 mph wobble still bounced in a highway curve (seg 23 sim)
+IN_CURVE_UP_HOLD_NS = 4_000_000_000  # was 2.5 s
+IN_CURVE_GRACE_NS = 2_500_000_000    # target gone this briefly between bends: still in the curve
 # Set speed above actual speed: taps there do not slow the car yet, so do not wait on the deadband.
 ABOVE_SPEED_MPH = 1.0
 UP_OVER_SPEED_MPH = 3.0        # going back up, stay within this of actual speed
@@ -122,6 +123,12 @@ class Status:
   fault_reason: str = ""
   alert: bool = False
   sending: bool = False
+  speed_scale: float = 1.0      # car/dash speed per openpilot vEgo (set by the runtime)
+  curve_target_mph: float = 0.0  # per-source targets, logging only (0 = none)
+  limit_target_mph: float = 0.0
+  stop_target_mph: float = 0.0
+  limit_mph: int = 0
+  features: int = 0             # 2 speed limit, 4 stops (bit 1 reserved)
 
 
 def throttle_driver_input(t: dict) -> bool:
@@ -183,6 +190,14 @@ class IcbmController:
     self.button_yield = False
     self.override_target: float | None = None
     self.last_curve_ns = 0
+    # vEgo (wheel speeds) reads ~12% under the car's own speed scale on the Rogue (set speed, cluster,
+    # model). Every comparison of actual speed with a set speed uses v_ego * speed_scale.
+    self.speed_scale = 1.0
+
+  def set_speed_scale(self, scale: float) -> None:
+    s = float(scale)
+    self.speed_scale = s if math.isfinite(s) and 1.0 <= s <= 1.25 else 1.0
+    self.status.speed_scale = self.speed_scale
 
   def disable(self) -> None:
     """Off for the rest of this drive (used after any unexpected error). Sends nothing afterward."""
@@ -363,7 +378,7 @@ class IcbmController:
       # Right after a curve, climb back no faster than the car actually speeds up. Once the road has
       # been clear for a while (e.g. ProPILOT is held back by a car ahead) go back to the driver's speed.
       if desired > current and now - self.last_curve_ns < UP_FOLLOW_SPEED_NS:
-        desired = min(desired, max(float(current), c.v_ego * MS_TO_MPH + UP_OVER_SPEED_MPH))
+        desired = min(desired, max(float(current), c.v_ego * self.speed_scale * MS_TO_MPH + UP_OVER_SPEED_MPH))
     st.desired_mph = desired
     goal = int(round(desired))
     err = desired - current
@@ -377,14 +392,17 @@ class IcbmController:
     else:
       # Going back up to the driver's own speed finishes the last mph too.
       # "In a curve" = a curve target is what holds us below the driver's speed right now.
-      in_curve = st.has_target and self.override_target is None and float(self.target_mph) < self.ceiling
+      # A curve target that drops out for a moment (winding road) still counts for IN_CURVE_GRACE_NS.
+      curve_now = st.has_target and float(self.target_mph) < self.ceiling
+      curve_recent = self.last_curve_ns > 0 and 0 < now - self.last_curve_ns < IN_CURVE_GRACE_NS
+      in_curve = self.override_target is None and (curve_now or curve_recent)
       up_err = 1.0 if goal >= self.ceiling else UP_ERR_MPH
       up_hold = UP_HOLD_NS
       if in_curve and goal < self.ceiling:
         up_err, up_hold = max(up_err, IN_CURVE_UP_ERR_MPH), IN_CURVE_UP_HOLD_NS
       # A curve target below a set speed that is above actual speed: those first taps do not slow
       # the car at all yet, so start right away (still one mph per tap, still the deadband to stop).
-      down_now = in_curve and err <= -DOWN_ERR_MPH and current >= c.v_ego * MS_TO_MPH + ABOVE_SPEED_MPH
+      down_now = in_curve and err <= -DOWN_ERR_MPH and current >= c.v_ego * self.speed_scale * MS_TO_MPH + ABOVE_SPEED_MPH
       want = -1 if err <= -DOWN_ERR_MPH else (1 if err >= up_err else 0)
       if want != 0 and want == self.err_dir:
         hold = DOWN_HOLD_NS if want < 0 else up_hold
