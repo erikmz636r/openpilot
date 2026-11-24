@@ -276,3 +276,22 @@ def test_driver_raise_mid_curve_is_respected():
   # a clearly tighter curve still acts
   car.run(10, target=40)
   assert car.set_mph == 40
+
+
+def test_carcontroller_error_turns_icbm_off_and_keeps_steering():
+  from opendbc.car import structs
+  from opendbc.car.car_helpers import interfaces
+  from opendbc.car.nissan.values import CAR
+  CI = interfaces[CAR.NISSAN_ROGUE]
+  CP = CI.get_params(CAR.NISSAN_ROGUE, {0: {}, 1: {}, 2: {}}, [], alpha_long=False, is_release=False, docs=False)
+  ci = CI(CP)
+  ci.update([(900_000_000, [])])
+  ci.CC.icbm.mode = MODE_WATCH
+  del ci.CS.cruise_throttle_nanos  # simulate an unexpected input problem
+  CC = structs.CarControl(enabled=True, latActive=True).as_reader()
+  _, sends = ci.apply(CC, 1_000_000_000)
+  assert ci.CC.icbm.mode == MODE_OFF
+  assert any(addr == 0x169 for addr, _, _ in sends)  # LKAS steering frame still goes out
+  _, sends = ci.apply(CC, 1_010_000_000)
+  assert any(addr == 0x169 for addr, _, _ in sends)
+  assert not any(addr == 0x20B for addr, _, _ in sends)

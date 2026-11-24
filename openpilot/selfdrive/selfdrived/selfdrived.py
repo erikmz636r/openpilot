@@ -750,10 +750,11 @@ class SelfdriveD:
       self.events.add(EventName.fcw)
 
     # Rogue cruise-button control fault (published by card in starpilotCarState.rogueIcbm)
-    if self.CP.carFingerprint == "NISSAN_ROGUE" and self.sm.recv_frame['starpilotCarState'] > 0 and \
-       (self.sm.frame - self.sm.recv_frame['starpilotCarState']) * DT_CTRL < 0.5:
+    if self.CP.carFingerprint == "NISSAN_ROGUE":
       try:
-        if self.sm['starpilotCarState'].rogueIcbm.alert:
+        if (self.sm.recv_frame['starpilotCarState'] > 0 and
+            (self.sm.frame - self.sm.recv_frame['starpilotCarState']) * DT_CTRL < 0.5 and
+            self.sm['starpilotCarState'].rogueIcbm.alert):
           self.events.add(EventName.rogueIcbmStopped)
       except Exception:
         pass

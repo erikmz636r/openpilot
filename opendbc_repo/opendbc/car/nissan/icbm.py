@@ -178,6 +178,17 @@ class IcbmController:
     self.override_target: float | None = None
     self.last_curve_ns = 0
 
+  def disable(self) -> None:
+    """Off for the rest of this drive (used after any unexpected error). Sends nothing afterward."""
+    self.mode = MODE_OFF
+    self.phase = Phase.IDLE
+    self.phase_frames = 0
+    self.tap = None
+    self.pending_tap = 0
+    self.status.mode = MODE_OFF
+    self.status.state = State.OFF
+    self.status.sending = False
+
   # ---- inputs from openpilot (planner side) ----
   def set_target(self, target_mph: float | None, now_ns: int) -> None:
     self.target_mph = target_mph

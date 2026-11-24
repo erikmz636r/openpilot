@@ -52,21 +52,31 @@ def curve_target_ms(v_ego: float, t: list[float], pos_x: list[float], vel_x: lis
 
 
 class CurvePlanner:
-  """Slew-limited curve target in display mph (None while there is no usable model)."""
+  """Slew-limited curve target in display mph (None while there is no usable model).
+
+  The curve math runs only when a new modelV2 arrives (20 Hz); every other frame only the cheap slew runs."""
 
   def __init__(self):
     self.target_mph: float | None = None
     self.last_ns = 0
+    self.raw_ms = math.inf
+    self.t_bind = math.inf
 
-  def update(self, v_ego: float, model, now_ns: int, model_ok: bool) -> float | None:
+  def observe_model(self, v_ego: float, model) -> None:
+    # modelV2 has no top-level t: the time axis lives in each XYZTData (position.t).
+    pos = model.position
+    self.raw_ms, self.t_bind = curve_target_ms(v_ego, list(pos.t), list(pos.x), list(model.velocity.x),
+                                               list(model.orientationRate.z))
+
+  def update(self, v_ego: float, model, now_ns: int, model_ok: bool, model_new: bool = True) -> float | None:
     if not model_ok:
       self.target_mph = None
       self.last_ns = now_ns
+      self.raw_ms, self.t_bind = math.inf, math.inf
       return None
-    raw_ms, t_bind = curve_target_ms(v_ego, list(model.t), list(model.position.x), list(model.velocity.x),
-                                     list(model.orientationRate.z))
-    if v_ego < MIN_ACTIVE_SPEED:
-      raw_ms = math.inf
+    if model_new or self.target_mph is None:
+      self.observe_model(v_ego, model)
+    raw_ms = self.raw_ms if v_ego >= MIN_ACTIVE_SPEED else math.inf
     # Never let a straight-road value run far above actual speed, or the slew would need seconds
     # to come back down when a curve shows up.
     raw = min(raw_ms * MS_TO_MPH, v_ego * MS_TO_MPH + TARGET_ABOVE_SPEED_MPH)
@@ -75,7 +85,7 @@ class CurvePlanner:
     if self.target_mph is None:
       # Start from actual speed so a fresh start never jumps the target down at once.
       self.target_mph = max(raw, v_ego * MS_TO_MPH)
-    down = TARGET_DOWN_FAST_MPH_S if t_bind <= FAST_WINDOW_S else TARGET_DOWN_MPH_S
+    down = TARGET_DOWN_FAST_MPH_S if self.t_bind <= FAST_WINDOW_S else TARGET_DOWN_MPH_S
     if raw < self.target_mph:
       self.target_mph = max(raw, self.target_mph - down * dt)
     else:
@@ -89,32 +99,75 @@ class CurvePlanner:
     return self.target_mph
 
 
+def disable(card, where: str) -> None:
+  """Any error: turn the feature off for this drive. Steering and sendcan must never stall for it."""
+  try:
+    from openpilot.common.swaglog import cloudlog
+    cloudlog.exception(f"rogue icbm disabled after error in {where}")
+  except Exception:
+    pass
+  try:
+    controller = getattr(card.CI.CC, "icbm", None)
+    if controller is not None:
+      controller.disable()
+  except Exception:
+    pass
+  card.rogue_icbm = None
+
+
 class IcbmRuntime:
-  def __init__(self, mode: int):
-    from openpilot.cereal import messaging
+  def __init__(self, mode: int, sm=None):
+    if sm is None:
+      from openpilot.cereal import messaging
+      sm = messaging.SubMaster(['modelV2'])
     self.mode = mode
-    self.sm = messaging.SubMaster(['modelV2'])
+    self.sm = sm
     self.planner = CurvePlanner()
 
   def update(self, card, cs, cc, now_ns: int) -> None:
-    controller = getattr(card.CI.CC, "icbm", None)
-    if controller is None:
-      return
-    self.sm.update(0)
-    model_ok = (self.sm.seen['modelV2'] and self.sm.valid['modelV2'] and
-                0 <= now_ns - int(self.sm.logMonoTime['modelV2']) <= MODEL_MAX_AGE_NS)
-    target = self.planner.update(float(cs.vEgo), self.sm['modelV2'], now_ns, model_ok)
-    controller.set_target(target, now_ns)
+    try:
+      controller = getattr(card.CI.CC, "icbm", None)
+      if controller is None or controller.mode == ICBM_OFF:
+        return
+      self.sm.update(0)
+      model_ok = bool(self.sm.seen['modelV2'] and self.sm.valid['modelV2'] and
+                      0 <= int(now_ns) - int(self.sm.logMonoTime['modelV2']) <= MODEL_MAX_AGE_NS)
+      model_new = bool(self.sm.updated['modelV2'])
+      target = self.planner.update(float(cs.vEgo), self.sm['modelV2'] if model_ok else None, int(now_ns), model_ok, model_new)
+      controller.set_target(target, int(now_ns))
+    except Exception:
+      disable(card, "runtime update")
 
 
 def configure(card, services=None):
-  """Called once from card at startup, before CarParams is published."""
+  """Called once from card at startup, before CarParams is published. Never raises."""
+  try:
+    return _configure(card)
+  except Exception:
+    try:
+      from openpilot.common.swaglog import cloudlog
+      cloudlog.exception("rogue icbm configure failed; feature off")
+    except Exception:
+      pass
+    try:
+      card.CI.CC.icbm.disable()
+    except Exception:
+      pass
+    try:
+      card.CP.safetyConfigs[0].safetyParam &= ~0x100  # NissanSafetyFlags.ICBM
+    except Exception:
+      pass
+    return None
+
+
+def _configure(card):
   cp = card.CP
   if cp.carFingerprint != "NISSAN_ROGUE" or card.CI.CC is None or getattr(card.CI.CC, "icbm", None) is None:
     return None
   mode = read_mode(card.params)
   if mode == ICBM_OFF or cp.passive or cp.dashcamOnly or cp.openpilotLongitudinalControl or not cp.pcmCruise:
     return None
+  runtime = IcbmRuntime(mode)  # build first: if this fails nothing below has changed
   if mode == ICBM_ACTIVE:
     from opendbc.car.nissan.values import NissanSafetyFlags
     from opendbc.car.structs import CarParams
@@ -124,23 +177,27 @@ def configure(card, services=None):
       cp.safetyConfigs[0].safetyParam |= NissanSafetyFlags.ICBM.value
   card.CI.CC.icbm.mode = mode
   card.CI.CC.icbm.status.mode = mode
-  return IcbmRuntime(mode)
+  runtime.mode = mode
+  return runtime
 
 
 def fill_rogue_icbm(state, status) -> None:
+  def finite(x):
+    x = float(x)
+    return x if math.isfinite(x) else 0.0
   msg = state.rogueIcbm
   msg.mode = int(status.mode) & 0xFF
   msg.state = int(status.state) & 0xFF
   msg.setMph = max(0, min(int(status.set_mph), 255))
   msg.carSetMph = max(0, min(int(status.car_set_mph), 255))
   msg.ceilingMph = max(0, min(int(status.ceiling_mph), 255))
-  msg.desiredMph = float(status.desired_mph)
-  msg.targetMph = float(status.target_mph)
+  msg.desiredMph = finite(status.desired_mph)
+  msg.targetMph = finite(status.target_mph)
   msg.hasTarget = bool(status.has_target)
-  msg.direction = int(status.direction)
+  msg.direction = max(-1, min(int(status.direction), 1))
   msg.tapsRequested = int(status.taps_requested) & 0xFFFFFFFF
   msg.tapsConfirmed = int(status.taps_confirmed) & 0xFFFFFFFF
   msg.misses = int(status.misses) & 0xFF
-  msg.faultReason = str(status.fault_reason)
+  msg.faultReason = str(status.fault_reason)[:120]
   msg.alert = bool(status.alert)
   msg.sending = bool(status.sending)
