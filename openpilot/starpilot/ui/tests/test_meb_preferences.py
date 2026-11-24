@@ -39,6 +39,7 @@ def test_saved_meb_off_can_be_restored_on_each_native_surface(module, layout, re
       panel._adb_toggle = Toggle()
       panel._ssh_toggle = Toggle()
       panel._ui_debug_toggle = Toggle()
+      panel._propilot_long_toggle = Toggle()
       panel._cellular_disabled_toggle = Toggle()
       panel._always_hold_toggle = Toggle()
     else:
@@ -81,6 +82,7 @@ def test_release_meb_confirmation_rechecks_offroad_and_saves_actual_choice(modul
       panel._adb_toggle = Toggle()
       panel._ssh_toggle = Toggle()
       panel._ui_debug_toggle = Toggle()
+      panel._propilot_long_toggle = Toggle()
       panel._cellular_disabled_toggle = Toggle()
       panel._always_hold_toggle = Toggle()
     else:

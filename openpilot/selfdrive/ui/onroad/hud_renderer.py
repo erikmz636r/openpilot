@@ -1,5 +1,7 @@
-from openpilot.starpilot.ui.raylib import rl
+import time
 from dataclasses import dataclass
+
+from openpilot.starpilot.ui.raylib import rl
 from openpilot.common.constants import CV
 from openpilot.selfdrive.ui.onroad.exp_button import ExpButton
 from openpilot.selfdrive.ui.onroad.model_source import ModelSource
@@ -73,6 +75,8 @@ class HudRenderer(Widget):
 
     self._exp_button: ExpButton = ExpButton(UI_CONFIG.button_size, UI_CONFIG.wheel_icon_size)
     self._model_source = ModelSource(scale=3)
+    self._propilot_debug = False
+    self._propilot_debug_checked = 0.0
 
   def _update_state(self) -> None:
     """Update HUD state based on car state and controls state."""
@@ -123,6 +127,43 @@ class HudRenderer(Widget):
     button_y = rect.y + UI_CONFIG.border_size
     self._exp_button.render(rl.Rectangle(button_x, button_y, UI_CONFIG.button_size, UI_CONFIG.button_size))
     self._draw_model_source(rect)
+    self._draw_propilot_long(rect)
+
+  def _propilot_debug_enabled(self) -> bool:
+    now = time.monotonic()
+    if now - self._propilot_debug_checked > 1.0:
+      self._propilot_debug_checked = now
+      try:
+        self._propilot_debug = bool(ui_state.params.get_bool("NissanProPilotLongDebug"))
+      except Exception:
+        self._propilot_debug = False
+    return self._propilot_debug
+
+  def _draw_propilot_long(self, rect: rl.Rectangle) -> None:
+    """Stock ProPILOT gas/brake request. Off unless the developer toggle is on."""
+    cp = ui_state.CP
+    if cp is None or str(cp.carFingerprint) != "NISSAN_ROGUE" or not self._propilot_debug_enabled():
+      return
+    try:
+      sample = ui_state.sm["starpilotCarState"].propilotLong
+    except Exception:
+      return
+    if not sample.valid:
+      return
+    eng = "ENG*" if sample.engaged else "off*"
+    arm = "ARMED*" if sample.armed else "disarmed*"
+    res = "  RES" if sample.resPressed else ""
+    text = (
+      f"ProPILOT  {int(sample.driveTorque):+d} cnt  brake {int(sample.brakePressure)}"
+      f"  ~{sample.brakeDecel:.2f} m/s2  {eng}  {arm}{res}"
+    )
+    size = 34
+    measured = measure_text_cached(self._font_medium, text, size)
+    x = rect.x + 24
+    y = rect.y + rect.height - measured.y - 28
+    bg = rl.Rectangle(x - 10, y - 6, measured.x + 20, measured.y + 12)
+    rl.draw_rectangle_rounded(bg, 0.3, 6, COLORS.BLACK_TRANSLUCENT)
+    rl.draw_text_ex(self._font_medium, text, rl.Vector2(x, y), size, 0, COLORS.WHITE)
 
   def _draw_model_source(self, rect: rl.Rectangle) -> None:
     self._model_source.render(rl.Rectangle(rect.x, rect.y, rect.width - UI_CONFIG.border_size, rect.height))

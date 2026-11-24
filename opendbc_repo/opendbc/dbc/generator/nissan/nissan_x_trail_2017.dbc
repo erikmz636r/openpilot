@@ -10,6 +10,16 @@ BO_ 438 PRO_PILOT: 8 XXX
  SG_ CRUISE_ACTIVATED : 38|1@0+ (1,0) [0|3] "" XXX
  SG_ CRUISE_ON : 36|1@0+ (1,0) [0|255] "" XXX
  SG_ STEER_STATUS : 51|1@0+ (1,0) [0|3] "" XXX
+ SG_ PROPILOT_DRIVE_TORQUE : 0|12@1- (1,0) [-2048|2047] "counts" XXX
+ SG_ PROPILOT_DRIVE_TORQUE_INV : 12|12@1+ (1,0) [0|4095] "" XXX
+ SG_ PROPILOT_DRIVE_TORQUE_SMOOTH : 56|8@1+ (1,0) [0|255] "counts" XXX
+ SG_ PROPILOT_BYTE4 : 32|8@1+ (1,0) [0|255] "" XXX
+
+CM_ SG_ 438 PROPILOT_DRIVE_TORQUE "HIGH CONFIDENCE. Rogue bus 1, about 100 Hz. Signed 12-bit little-endian bits 0-11. Raw counts, not Nm. Idle near 0, cruise about +85 at 20 mph to +297 at 60 mph, coast about -144, exactly -500 means no drive torque.";
+CM_ SG_ 438 PROPILOT_DRIVE_TORQUE_INV "HIGH CONFIDENCE. Bits 12-23 are the bitwise inverse of the raw 12-bit counts. Passed on 100 percent of 300576 frames.";
+CM_ SG_ 438 PROPILOT_DRIVE_TORQUE_SMOOTH "Byte 7. Smoothed ramp of the same request, raw counts. Not 1:1 with the 12-bit value. While engaged, bus 0 0x15A is about 3.14 times this byte.";
+CM_ SG_ 438 PROPILOT_BYTE4 "Raw byte 4. Disengaged 0x13, engaged 0x53, so bit 6 flips. PROVISIONAL as an engaged flag.";
+CM_ SG_ 438 CRUISE_ACTIVATED "PROVISIONAL engaged flag. Byte 4 bit 6, same as this upstream bit. Seen as the 0x13 to 0x53 transition.";
 
 BO_ 523 CRUISE_THROTTLE: 6 XXX
  SG_ PROPILOT_BUTTON : 8|1@0+ (1,0) [0|1] "" XXX
@@ -28,6 +38,8 @@ BO_ 523 CRUISE_THROTTLE: 6 XXX
  SG_ unsure1 : 7|10@0+ (1,0) [0|1023] "" XXX
  SG_ unsure2 : 43|4@0+ (1,0) [0|1] "" XXX
  SG_ unsure3 : 19|2@0+ (1,0) [0|3] "" XXX
+
+CM_ SG_ 523 RES_BUTTON "Stock cruise RES on bus 0 0x20B. Already parsed with the other wheel buttons. A press is followed about 0.15 s later by ProPILOT re-arming. Log and display only; do not transmit.";
 
 BO_ 665 ESP: 8 XXX
  SG_ ESP_DISABLED : 24|1@0+ (1,0) [0|1] "" XXX
@@ -61,6 +73,35 @@ BO_ 1108 DOORS_LIGHTS: 8 XXX
  SG_ BOOT_OPEN : 55|1@0+ (1,0) [0|1] "" XXX
  SG_ BRAKE_LIGHT : 54|1@0+ (1,0) [0|1] "" XXX
  SG_ USER_BRAKE_PRESSED : 23|1@0+ (1,0) [0|1] "" XXX
+
+BO_ 346 PROPILOT_PEDAL_REQUEST: 8 XXX
+ SG_ PEDAL_REQUEST : 23|10@0+ (1,0) [0|1023] "" XXX
+ SG_ ENGAGED_STATE : 8|8@1+ (1,0) [0|255] "" XXX
+
+CM_ SG_ 346 PEDAL_REQUEST "HIGH CONFIDENCE. Rogue bus 0 0x15A. 10-bit value is byte2<<2 | byte3>>6 (23|10@0+). About 3.14 times 0x1B6 byte 7 while engaged. Follows the driver pedal otherwise.";
+CM_ SG_ 346 ENGAGED_STATE "Byte 1 equals 2 while engaged.";
+
+BO_ 724 PROPILOT_LONG_STATUS: 8 XXX
+ SG_ STATUS_BYTE0 : 0|8@1+ (1,0) [0|255] "" XXX
+ SG_ ENGAGED : 7|1@1+ (1,0) [0|1] "" XXX
+ SG_ STATUS_BYTE4 : 32|8@1+ (1,0) [0|255] "" XXX
+ SG_ ARMED : 39|1@1+ (1,0) [0|1] "" XXX
+
+CM_ SG_ 724 STATUS_BYTE0 "Rogue bus 1 0x2D4, about 50 Hz. Byte 0 is 0x80 while ICC is engaged.";
+CM_ SG_ 724 ENGAGED "HIGH CONFIDENCE. Byte 0 bit 7 (0x80). ICC engaged.";
+CM_ SG_ 724 STATUS_BYTE4 "Raw byte 4. Bit 7 is the armed candidate.";
+CM_ SG_ 724 ARMED "PROVISIONAL. Byte 4 bit 7. Looks like armed or set speed stored. Stays set through the standstill release. Not a hold flag.";
+
+BO_ 1247 PROPILOT_CAMERA_LEAD: 8 XXX
+ SG_ LEAD_BYTE0 : 0|8@1+ (1,0) [0|255] "" XXX
+ SG_ LEAD_BYTE1 : 8|8@1+ (1,0) [0|255] "" XXX
+ SG_ LEAD_BYTE2 : 16|8@1+ (1,0) [0|255] "" XXX
+ SG_ LEAD_BYTE3 : 24|8@1+ (1,0) [0|255] "" XXX
+
+CM_ SG_ 1247 LEAD_BYTE0 "Rogue bus 2 camera 0x4DF, about 10 Hz. Not a command. Jumps toward 255 at lead acquisition, then ramps. Not a distance.";
+CM_ SG_ 1247 LEAD_BYTE1 "Nonzero only while a lead is tracked. Not a command.";
+CM_ SG_ 1247 LEAD_BYTE2 "Raw byte. No meaning assigned. Not a command.";
+CM_ SG_ 1247 LEAD_BYTE3 "0xB4 while engaged in the first logged segment. Not a command.";
 
 BO_ 1273 HUD: 7 XXX
  SG_ SEATBELT_DRIVER_LATCHED : 25|1@0+ (1,0) [0|1] "" XXX

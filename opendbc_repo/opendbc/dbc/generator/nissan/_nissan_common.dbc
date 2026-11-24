@@ -66,6 +66,9 @@ BO_ 451 PROPILOT_BRAKE: 8 XXX
  SG_ BRAKE_PRESSURE : 5|9@0+ (1,0) [0|511] "" XXX
  SG_ BRAKE_ACTIVE : 47|1@0+ (1,0) [0|1] "" XXX
 
+CM_ SG_ 451 BRAKE_PRESSURE "Rogue bus 1. Max 511. Estimated decel m/s^2 about 0.004*pressure+0.11 (aEgo is the negative of that), about 0.3 s lag. Active exactly when 0x1B6 is -500 while moving. Start bit is the upstream layout.";
+CM_ SG_ 451 BRAKE_ACTIVE "PROVISIONAL bit index relative to the drive-log summary. Upstream bit 47|1@0+.";
+
 BO_ 783 CRUISE_STATE: 3 XXX
  SG_ CRUISE_ENABLED : 3|1@0+ (1,0) [0|1] "" XXX
 

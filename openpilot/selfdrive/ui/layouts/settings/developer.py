@@ -1,6 +1,6 @@
 from collections.abc import Callable
 
-from openpilot.common.params import Params
+from openpilot.common.params import Params, UnknownKeyName
 from openpilot.starpilot.longitudinal.enhanced_stop_hold import KEY as HOLD_KEY, LABEL as HOLD_LABEL, DESCRIPTION as HOLD_DESCRIPTION
 from openpilot.starpilot.car.hyundai.aol import ioniq6_alpha_long_available
 from openpilot.starpilot.car.ford.longitudinal_preferences import release_long_available as ford_release_long_available
@@ -105,6 +105,15 @@ class DeveloperLayout(Widget):
       initial_state=self._params.get_bool("ShowDebugInfo"),
       callback=self._on_enable_ui_debug,
     )
+    self._propilot_long_toggle = toggle_item(
+      lambda: tr("ProPILOT Longitudinal Debug"),
+      description=lambda: tr(
+        "On a 2019 Rogue, show stock ProPILOT drive request, brake pressure, and engaged/armed state. "
+        "Display only. openpilot does not send, change, or block any CAN message."
+      ),
+      initial_state=self._propilot_long_enabled(),
+      callback=self._on_propilot_long_debug,
+    )
     self._on_enable_ui_debug(self._params.get_bool("ShowDebugInfo"))
 
     self._cellular_disabled_toggle = toggle_item(
@@ -126,6 +135,7 @@ class DeveloperLayout(Widget):
       self._alpha_long_toggle,
       self._always_hold_toggle,
       self._ui_debug_toggle,
+      self._propilot_long_toggle,
       self._cellular_disabled_toggle,
     ], line_separator=True, spacing=0)
 
@@ -176,16 +186,35 @@ class DeveloperLayout(Widget):
       ("AlphaLongitudinalEnabled", self._alpha_long_toggle),
       (HOLD_KEY, self._always_hold_toggle),
       ("ShowDebugInfo", self._ui_debug_toggle),
+      ("NissanProPilotLongDebug", self._propilot_long_toggle),
       ("CellularDisabled", self._cellular_disabled_toggle),
     ):
+      try:
+        raw = self._params.get_bool(key)
+      except UnknownKeyName:
+        if key != "NissanProPilotLongDebug":
+          raise
+        raw = False
       value = (not stock_long_requested(self._params) if key == "AlphaLongitudinalEnabled" and meb_settings_capable(ui_state.CP)
-               else self._params.get_bool(key))
+               else raw)
       item.action_item.set_state(value)
 
   def _on_always_hold(self, state: bool):
     if ui_state.is_offroad():
       self._params.put_bool(HOLD_KEY, state, block=True)
     self._always_hold_toggle.action_item.set_state(self._params.get_bool(HOLD_KEY))
+
+  def _propilot_long_enabled(self) -> bool:
+    try:
+      return self._params.get_bool("NissanProPilotLongDebug")
+    except UnknownKeyName:
+      return False
+
+  def _on_propilot_long_debug(self, state: bool):
+    try:
+      self._params.put_bool("NissanProPilotLongDebug", state, block=True)
+    except UnknownKeyName:
+      self._propilot_long_toggle.action_item.set_state(False)
 
   def _on_enable_ui_debug(self, state: bool):
     self._params.put_bool("ShowDebugInfo", state, block=True)

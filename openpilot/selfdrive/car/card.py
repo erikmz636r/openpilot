@@ -1172,6 +1172,14 @@ class Car:
     elif self.CP.brand == 'hyundai':
       from openpilot.starpilot.car.hyundai.dashboard import compose as hyundai_compose
       companion = hyundai_compose(self.CP, self.CI.CS, CS, companion, car_state_stamp=int(cs_send.logMonoTime))
+    if self.CP.brand == 'nissan' and self.CP.carFingerprint == 'NISSAN_ROGUE':
+      obs = getattr(self.CI.CS, 'propilot_long', None)
+      if obs is not None and obs.valid:
+        from openpilot.starpilot.car.nissan.propilot_long_log import fill_propilot_long
+        if companion is None:
+          companion = messaging.new_message('starpilotCarState', valid=bool(cs_send.valid), logMonoTime=int(cs_send.logMonoTime))
+        companion.starpilotCarState.sourceCarStateMonoTime = int(cs_send.logMonoTime)
+        fill_propilot_long(companion.starpilotCarState, obs)
     self.car_gps_publisher.update(self.CI.CS, self.pm, companion)
     self.pm.send('carState', cs_send)
     if getattr(self, 'learning_stamp_observer', None) is not None:

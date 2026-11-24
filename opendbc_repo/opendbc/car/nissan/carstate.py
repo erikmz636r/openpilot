@@ -4,6 +4,7 @@ from opendbc.can import CANDefine, CANParser
 from opendbc.car import Bus, create_button_events, structs
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.interfaces import CarStateBase
+from opendbc.car.nissan.propilot_long import observe
 from opendbc.car.nissan.values import CAR, DBC, CarControllerParams
 
 ButtonType = structs.CarState.ButtonEvent.Type
@@ -24,6 +25,8 @@ class CarState(CarStateBase):
 
     self.distance_button = 0
     self.lkas_setting = None
+    # Read-only ProPILOT longitudinal sample. None except on NISSAN_ROGUE.
+    self.propilot_long = None
 
   def update(self, can_parsers) -> structs.CarState:
     cp = can_parsers[Bus.pt]
@@ -142,12 +145,68 @@ class CarState(CarStateBase):
       self.lkas_setting = ret.invalidLkasSetting
 
     ret.buttonEvents = button_events
+
+    # Decode only. This does not change cruise, torque, or the returned CarState
+    # fields that controlsd already consumes.
+    if self.CP.carFingerprint == CAR.NISSAN_ROGUE:
+      self.propilot_long = self._propilot_long(cp, cp_cam, cp_adas)
+    else:
+      self.propilot_long = None
     return ret
 
   @staticmethod
+  def _seen(parser, message: str, signal: str) -> bool:
+    return parser.ts_nanos[message][signal] > 0
+
+  def _propilot_long(self, cp, cp_cam, cp_adas):
+    # Panda buses on Rogue (not Altima): pt=0, cam=1, adas=2.
+    # 0x1B6 / 0x1C3 / 0x2D4 are on bus 1, 0x15A on bus 0, 0x4DF on bus 2.
+    torque = cp_cam.vl["PRO_PILOT"]
+    brake = cp_cam.vl["PROPILOT_BRAKE"]
+    status = cp_cam.vl["PROPILOT_LONG_STATUS"]
+    pedal = cp.vl["PROPILOT_PEDAL_REQUEST"]
+    lead = cp_adas.vl["PROPILOT_CAMERA_LEAD"]
+    return observe(
+      torque=int(round(torque["PROPILOT_DRIVE_TORQUE"])),
+      torque_inverse=int(round(torque["PROPILOT_DRIVE_TORQUE_INV"])),
+      smooth=int(round(torque["PROPILOT_DRIVE_TORQUE_SMOOTH"])),
+      byte4=int(round(torque["PROPILOT_BYTE4"])),
+      brake_pressure=int(round(brake["BRAKE_PRESSURE"])),
+      brake_active=bool(brake["BRAKE_ACTIVE"]),
+      status_byte0=int(round(status["STATUS_BYTE0"])),
+      status_byte4=int(round(status["STATUS_BYTE4"])),
+      # Same CRUISE_THROTTLE frame as the distance button. Do not turn this into a button event.
+      res_pressed=bool(cp.vl["CRUISE_THROTTLE"]["RES_BUTTON"]),
+      pedal_request=int(round(pedal["PEDAL_REQUEST"])),
+      pedal_state=int(round(pedal["ENGAGED_STATE"])),
+      lead=(
+        int(round(lead["LEAD_BYTE0"])),
+        int(round(lead["LEAD_BYTE1"])),
+        int(round(lead["LEAD_BYTE2"])),
+        int(round(lead["LEAD_BYTE3"])),
+      ),
+      seen_torque=self._seen(cp_cam, "PRO_PILOT", "PROPILOT_DRIVE_TORQUE"),
+      seen_brake=self._seen(cp_cam, "PROPILOT_BRAKE", "BRAKE_PRESSURE"),
+      seen_status=self._seen(cp_cam, "PROPILOT_LONG_STATUS", "STATUS_BYTE0"),
+      seen_pedal=self._seen(cp, "PROPILOT_PEDAL_REQUEST", "PEDAL_REQUEST"),
+      seen_lead=self._seen(cp_adas, "PROPILOT_CAMERA_LEAD", "LEAD_BYTE0"),
+    )
+
+  @staticmethod
   def get_can_parsers(CP):
-    return {
+    parsers = {
       Bus.pt: CANParser(DBC[CP.carFingerprint][Bus.pt], [], 1 if CP.carFingerprint == CAR.NISSAN_ALTIMA else 0),
       Bus.cam: CANParser(DBC[CP.carFingerprint][Bus.pt], [], 0 if CP.carFingerprint == CAR.NISSAN_ALTIMA else 1),
       Bus.adas: CANParser(DBC[CP.carFingerprint][Bus.pt], [], 2),
     }
+    # NaN rate: these RX messages must not change canValid or bus timeout.
+    if CP.carFingerprint == CAR.NISSAN_ROGUE:
+      debug = (
+        (parsers[Bus.cam], ("PROPILOT_BRAKE", "PROPILOT_LONG_STATUS")),
+        (parsers[Bus.pt], ("PROPILOT_PEDAL_REQUEST",)),
+        (parsers[Bus.adas], ("PROPILOT_CAMERA_LEAD",)),
+      )
+      for parser, names in debug:
+        for name in names:
+          parser._add_message(name, float("nan"))
+    return parsers

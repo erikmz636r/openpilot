@@ -223,6 +223,37 @@ struct StarPilotCarState @0xf35cc4560bbf6ec2 {
   steeringLimitInfo @39 :StarPilotCarControl.SteeringLimitInfo;
   toyotaCruise @38 :ToyotaCruise;
   gmRegenGear @40 :Bool;
+  # Read-only Rogue ProPILOT longitudinal observation. Not a command.
+  propilotLong @41 :ProPilotLong;
+
+  struct ProPilotLong {
+    valid @0 :Bool;
+    driveTorque @1 :Int16;
+    driveTorqueInverseOk @2 :Bool;
+    driveTorqueSmooth @3 :UInt8;
+    byte4 @4 :UInt8;
+    engaged @5 :Bool;
+    brakePressure @6 :UInt16;
+    brakeActive @7 :Bool;
+    brakeDecel @8 :Float32;
+    statusByte0 @9 :UInt8;
+    statusEngaged @10 :Bool;
+    armed @11 :Bool;
+    pedalRequest @12 :UInt16;
+    pedalState @13 :UInt8;
+    pedalEngaged @14 :Bool;
+    lead0 @15 :UInt8;
+    lead1 @16 :UInt8;
+    lead2 @17 :UInt8;
+    lead3 @18 :UInt8;
+    seenTorque @19 :Bool;
+    seenBrake @20 :Bool;
+    seenStatus @21 :Bool;
+    seenPedal @22 :Bool;
+    seenLead @23 :Bool;
+    statusByte4 @24 :UInt8;
+    resPressed @25 :Bool;  # stock wheel RES on bus 0 0x20B. Display only.
+  }
 
   struct ToyotaCruise {
     version @0 :UInt16;

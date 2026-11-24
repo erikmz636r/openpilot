@@ -1,5 +1,5 @@
 from collections.abc import Callable
-from openpilot.common.params import Params
+from openpilot.common.params import Params, UnknownKeyName
 from openpilot.starpilot.longitudinal.enhanced_stop_hold import KEY as HOLD_KEY, LABEL as HOLD_LABEL, DESCRIPTION as HOLD_DESCRIPTION
 from openpilot.common.time_helpers import system_time_valid
 from openpilot.system.ui.widgets.scroller import NavScroller
@@ -117,6 +117,10 @@ class DeveloperLayoutMici(NavScroller):
                                            toggle_callback=self._on_always_hold, description=HOLD_DESCRIPTION)
     self._navigation_toggle = BigParamControl("navigation (alpha)", "NavigationEnabled",
                                               description="Turn-by-turn navigation with a route map. Set a destination from comma connect.")
+    self._propilot_long_toggle = BigParamControl(
+      "ProPILOT long debug", "NissanProPilotLongDebug",
+      description="Rogue only. Show stock ProPILOT drive request, brake pressure, and engaged/armed. Display only, no CAN changes.",
+    )
     self._debug_mode_toggle = BigParamControl("ui debug mode", "ShowDebugInfo",
                                               toggle_callback=lambda checked: (gui_app.set_show_touches(checked), gui_app.set_show_fps(checked)),
                                               description="Show touch locations and the UI frame rate.")
@@ -133,6 +137,7 @@ class DeveloperLayoutMici(NavScroller):
       self._alpha_long_toggle,
       self._always_hold_toggle,
       self._debug_mode_toggle,
+      self._propilot_long_toggle,
       self._navigation_toggle,
       self._cellular_off_toggle,
     ])
@@ -145,6 +150,7 @@ class DeveloperLayoutMici(NavScroller):
       ("AlphaLongitudinalEnabled", self._alpha_long_toggle),
       (HOLD_KEY, self._always_hold_toggle),
       ("ShowDebugInfo", self._debug_mode_toggle),
+      ("NissanProPilotLongDebug", self._propilot_long_toggle),
       ("NavigationEnabled", self._navigation_toggle),
       ("CellularDisabled", self._cellular_off_toggle),
     )
@@ -193,8 +199,14 @@ class DeveloperLayoutMici(NavScroller):
 
     # Refresh toggles from params to mirror external changes
     for key, item in self._refresh_toggles:
+      try:
+        raw = ui_state.params.get_bool(key)
+      except UnknownKeyName:
+        if key != "NissanProPilotLongDebug":
+          raise
+        raw = False
       value = (not stock_long_requested(ui_state.params) if key == "AlphaLongitudinalEnabled" and meb_settings_capable(ui_state.CP)
-               else ui_state.params.get_bool(key))
+               else raw)
       item.set_checked(value)
 
   def _on_always_hold(self, state: bool):
