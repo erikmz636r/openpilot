@@ -225,6 +225,26 @@ struct StarPilotCarState @0xf35cc4560bbf6ec2 {
   gmRegenGear @40 :Bool;
   # Read-only Rogue ProPILOT longitudinal observation. Not a command.
   propilotLong @41 :ProPilotLong;
+  # Rogue cruise-button control (SET-/RES+ taps). Status only.
+  rogueIcbm @42 :RogueIcbm;
+
+  struct RogueIcbm {
+    mode @0 :UInt8;            # 0 off, 1 watch only, 2 active
+    state @1 :UInt8;           # opendbc/car/nissan/icbm.py State
+    setMph @2 :UInt8;          # car set speed (watch: simulated)
+    carSetMph @3 :UInt8;
+    ceilingMph @4 :UInt8;      # driver's own set speed
+    desiredMph @5 :Float32;
+    targetMph @6 :Float32;     # curve target before clamping
+    hasTarget @7 :Bool;
+    direction @8 :Int8;        # last tap: +1 RES, -1 SET
+    tapsRequested @9 :UInt32;
+    tapsConfirmed @10 :UInt32;
+    misses @11 :UInt8;
+    faultReason @12 :Text;
+    alert @13 :Bool;
+    sending @14 :Bool;
+  }
 
   struct ProPilotLong {
     valid @0 :Bool;

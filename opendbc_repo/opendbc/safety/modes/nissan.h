@@ -2,6 +2,7 @@
 
 #include "opendbc/safety/declarations.h"
 #include "opendbc/safety/modes/nissan_aol.h"
+#include "opendbc/safety/modes/nissan_icbm.h"
 
 static bool nissan_alt_eps = false;
 
@@ -82,9 +83,12 @@ static bool nissan_tx_hook(const CANPacket_t *msg) {
   }
 
   // acc button check, only allow cancel button to be sent
+  // (ICBM opt-in: additionally allow checked SET/RES taps, see nissan_icbm.h)
   if (msg->addr == 0x20bU) {
-    // Violation of any button other than cancel is pressed
-    violation |= ((msg->data[1] & 0x3dU) > 0U);
+    if (!nissan_icbm_tx_allowed(msg)) {
+      // Violation of any button other than cancel is pressed
+      violation |= ((msg->data[1] & 0x3dU) > 0U);
+    }
   }
 
   if (violation) {
@@ -130,10 +134,18 @@ static safety_config nissan_init(uint16_t param) {
   const uint16_t NISSAN_PARAM_ALT_EPS_BUS = 1;
 
   nissan_alt_eps = GET_FLAG(param, NISSAN_PARAM_ALT_EPS_BUS);
+  // ICBM is a separate opt-in bit, X-Trail/Rogue bus layout only. Strip it before the AOL profile
+  // match so the existing profiles are unchanged with or without it.
+  nissan_icbm = GET_FLAG(param, NISSAN_PARAM_ICBM) && !nissan_alt_eps;
+  nissan_icbm_reset();
+  const uint16_t base_param = param & (uint16_t)(~NISSAN_PARAM_ICBM);
   nissan_aol_reset();
-  nissan_aol_enabled = ((unsigned int)alternative_experience == 32U) && ((param == 0U) || (param == 1U) || (param == 4U));
-  nissan_aol_alt = param == 1U;
-  nissan_aol_leaf = param == 4U;
+  nissan_aol_enabled = ((unsigned int)alternative_experience == 32U) && ((base_param == 0U) || (base_param == 1U) || (base_param == 4U));
+  nissan_aol_alt = base_param == 1U;
+  nissan_aol_leaf = base_param == 4U;
+  if (nissan_aol_leaf) {
+    nissan_icbm = false;
+  }
   if (nissan_aol_enabled) {
     static const AolSafetyPolicy policy = {
       .reset = nissan_aol_reset,
@@ -165,9 +177,19 @@ static safety_config nissan_init(uint16_t param) {
   return ret;
 }
 
+static void nissan_optional_rx(const CANPacket_t *msg) {
+  nissan_aol_observe(msg);
+  nissan_icbm_observe(msg);
+}
+
+static bool nissan_fwd_packet(const CANPacket_t *msg) {
+  return nissan_icbm_fwd_block(msg);
+}
+
 const safety_hooks nissan_hooks = {
   .init = nissan_init,
   .rx = nissan_rx_hook,
   .tx = nissan_tx_hook,
-  .optional_rx = nissan_aol_observe,
+  .optional_rx = nissan_optional_rx,
+  .fwd_packet = nissan_fwd_packet,
 };

@@ -27,6 +27,10 @@ class CarState(CarStateBase):
     self.lkas_setting = None
     # Read-only ProPILOT longitudinal sample. None except on NISSAN_ROGUE.
     self.propilot_long = None
+    self.cruise_throttle_nanos = 0
+    self.set_speed_raw = 255
+    self.set_speed_nanos = 0
+    self.speed_units_mph = False
 
   def update(self, can_parsers) -> structs.CarState:
     cp = can_parsers[Bus.pt]
@@ -126,6 +130,12 @@ class CarState(CarStateBase):
       ret.invalidLkasSetting = bool(cp_adas.vl["LKAS_SETTINGS"]["LKAS_ENABLED"])
 
     self.cruise_throttle_msg = copy.copy(cp.vl["CRUISE_THROTTLE"])
+    # Rogue cruise-button management (icbm.py) reads these raw values every frame.
+    self.cruise_throttle_nanos = cp.ts_nanos["CRUISE_THROTTLE"]["COUNTER"]
+    if self.CP.carFingerprint == CAR.NISSAN_ROGUE:
+      self.set_speed_raw = int(round(speed))
+      self.set_speed_nanos = cp_adas.ts_nanos["PROPILOT_HUD"]["SET_SPEED"]
+      self.speed_units_mph = bool(cp.vl["HUD"]["SPEED_MPH"])
 
     if self.CP.carFingerprint in (CAR.NISSAN_LEAF, CAR.NISSAN_LEAF_IC):
       self.cancel_msg = copy.copy(cp.vl["CANCEL_MSG"])

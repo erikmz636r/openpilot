@@ -3,17 +3,36 @@ from openpilot.common.params import Params, UnknownKeyName
 from openpilot.starpilot.longitudinal.enhanced_stop_hold import KEY as HOLD_KEY, LABEL as HOLD_LABEL, DESCRIPTION as HOLD_DESCRIPTION
 from openpilot.common.time_helpers import system_time_valid
 from openpilot.system.ui.widgets.scroller import NavScroller
-from openpilot.selfdrive.ui.mici.widgets.button import BigButton, BigToggle, BigParamControl, BigCircleParamControl, GreyBigButton
+from openpilot.selfdrive.ui.mici.widgets.button import BigButton, BigToggle, BigMultiParamToggle, BigParamControl, BigCircleParamControl, GreyBigButton
 from openpilot.selfdrive.ui.mici.widgets.dialog import BigDialog, BigInputDialog, BigConfirmationCircleButton
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.selfdrive.ui.layouts.settings.common import restart_needed_callback
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.starpilot.car.hyundai.aol import ioniq6_alpha_long_available
+from openpilot.starpilot.car.nissan.icbm_settings import (ICBM_KEY, ICBM_MICI_DESCRIPTION, ICBM_MICI_OPTIONS, ICBM_MICI_TITLE,
+                                                        read_mode as read_icbm_mode)
 from openpilot.starpilot.car.ford.longitudinal_preferences import release_long_available as ford_release_long_available
 from opendbc.car.volkswagen.meb_modes import MEB_CARS, settings_capable as meb_settings_capable
 from openpilot.starpilot.car.volkswagen.preferences import stock_long_requested
 from openpilot.selfdrive.ui.widgets.ssh_key import SshKeyFetcher
 
+
+
+class _IcbmModeToggle(BigMultiParamToggle):
+  """Three-way Rogue cruise-button setting; tolerant of a params build that lacks the key."""
+
+  def _load_value(self):
+    try:
+      super()._load_value()
+    except (UnknownKeyName, IndexError, TypeError):
+      self.set_value(self._options[0])
+
+  def request_index(self, index: int, *, block: bool = False) -> bool:
+    try:
+      return super().request_index(index, block=block)
+    except UnknownKeyName:
+      self.set_value(self._options[0])
+      return False
 
 class AlphaLongConfirmPage(NavScroller):
   def __init__(self, on_confirm: Callable[[], None], *, system_long_default: bool = False):
@@ -121,6 +140,8 @@ class DeveloperLayoutMici(NavScroller):
       "ProPILOT long debug", "NissanProPilotLongDebug",
       description="Rogue only. Show stock ProPILOT drive request, brake pressure, and engaged/armed. Display only, no CAN changes.",
     )
+    self._icbm_toggle = _IcbmModeToggle(ICBM_MICI_TITLE, ICBM_KEY, ICBM_MICI_OPTIONS, description=ICBM_MICI_DESCRIPTION)
+    self._icbm_toggle.set_enabled(lambda: ui_state.is_offroad())
     self._debug_mode_toggle = BigParamControl("ui debug mode", "ShowDebugInfo",
                                               toggle_callback=lambda checked: (gui_app.set_show_touches(checked), gui_app.set_show_fps(checked)),
                                               description="Show touch locations and the UI frame rate.")
@@ -138,6 +159,7 @@ class DeveloperLayoutMici(NavScroller):
       self._always_hold_toggle,
       self._debug_mode_toggle,
       self._propilot_long_toggle,
+      self._icbm_toggle,
       self._navigation_toggle,
       self._cellular_off_toggle,
     ])
@@ -208,6 +230,10 @@ class DeveloperLayoutMici(NavScroller):
       value = (not stock_long_requested(ui_state.params) if key == "AlphaLongitudinalEnabled" and meb_settings_capable(ui_state.CP)
                else raw)
       item.set_checked(value)
+
+    icbm_toggle = getattr(self, "_icbm_toggle", None)
+    if icbm_toggle is not None:
+      icbm_toggle.set_value(ICBM_MICI_OPTIONS[read_icbm_mode(ui_state.params)])
 
   def _on_always_hold(self, state: bool):
     if ui_state.is_offroad():

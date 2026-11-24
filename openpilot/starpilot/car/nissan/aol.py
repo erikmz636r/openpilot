@@ -7,6 +7,12 @@ from openpilot.starpilot.aol.policy import AolVehiclePolicy
 
 # Bit 1 belonged to Dom's disabled longitudinal experiment; never reuse it.
 NISSAN_AOL_LEAF = 4
+# Rogue cruise-button control opt-in (NissanSafetyFlags.ICBM). Independent of AOL; masked here.
+NISSAN_ICBM = 0x100
+
+
+def _base_param(param):
+  return int(param) & ~NISSAN_ICBM
 
 
 def qualified(cp, *, marked_only=False):
@@ -29,7 +35,7 @@ def qualified(cp, *, marked_only=False):
     leaf = cp.carFingerprint in (CAR.NISSAN_LEAF, CAR.NISSAN_LEAF_IC)
     expected = base | (NISSAN_AOL_LEAF if leaf and cp.alternativeExperience == 32 else 0)
     config = cp.safetyConfigs[0]
-    return config.safetyModel == structs.CarParams.SafetyModel.nissan and config.safetyParam == expected
+    return config.safetyModel == structs.CarParams.SafetyModel.nissan and _base_param(config.safetyParam) == expected
   except (AttributeError, TypeError, ValueError, IndexError):
     return False
 
@@ -50,7 +56,7 @@ def policy_for(cp):
 
 
 def native_profile_supported(model, param):
-  return model == int(structs.CarParams.SafetyModel.nissan) and param in (0, 1, NISSAN_AOL_LEAF)
+  return model == int(structs.CarParams.SafetyModel.nissan) and _base_param(param) in (0, 1, NISSAN_AOL_LEAF)
 
 
 def native_accepts_cp(cp, model, param):

@@ -6,6 +6,7 @@ from opendbc.car.interfaces import CarControllerBase
 from opendbc.car.nissan import nissancan
 from opendbc.car.nissan.values import CAR, CarControllerParams
 from opendbc.car.common.filter_simple import FirstOrderFilter
+from opendbc.car.nissan.icbm import MODE_ACTIVE, CarInputs, IcbmController, make_throttle_values
 
 VisualAlert = structs.CarControl.HUDControl.VisualAlert
 
@@ -20,6 +21,10 @@ class CarController(CarControllerBase):
     self.apply_angle_last = 0
 
     self.packer = CANPacker(dbc_names[Bus.pt])
+
+    # Rogue cruise-button management. Off unless the StarPilot setting turns it on at startup
+    # (starpilot/car/nissan/icbm.py); Active also needs the panda flag set at the same time.
+    self.icbm = IcbmController() if CP.carFingerprint == CAR.NISSAN_ROGUE else None
 
   def update(self, CC, CS, now_nanos):
     actuators = CC.actuators
@@ -57,6 +62,27 @@ class CarController(CarControllerBase):
 
     if self.CP.carFingerprint in (CAR.NISSAN_ROGUE, CAR.NISSAN_XTRAIL, CAR.NISSAN_ALTIMA) and pcm_cancel_cmd:
       can_sends.append(nissancan.create_acc_cancel_cmd(self.packer, self.car_fingerprint, CS.cruise_throttle_msg))
+
+    if self.icbm is not None and self.icbm.mode != 0 and now_nanos is not None:
+      propilot = getattr(CS, "propilot_long", None)
+      button = self.icbm.update(CarInputs(
+        now_ns=int(now_nanos),
+        op_enabled=bool(CC.enabled),
+        cruise_enabled=bool(CS.out.cruiseState.enabled),
+        propilot_engaged=bool(propilot is not None and propilot.valid and propilot.engaged),
+        v_ego=float(CS.out.vEgo),
+        standstill=bool(CS.out.standstill),
+        gas_pressed=bool(CS.out.gasPressed),
+        brake_pressed=bool(CS.out.brakePressed),
+        throttle=CS.cruise_throttle_msg,
+        throttle_ns=int(CS.cruise_throttle_nanos),
+        set_raw=int(CS.set_speed_raw),
+        set_ns=int(CS.set_speed_nanos),
+        speed_mph_units=bool(CS.speed_units_mph),
+        pcm_cancel=bool(pcm_cancel_cmd),
+      ))
+      if button is not None and self.icbm.mode == MODE_ACTIVE and not pcm_cancel_cmd:
+        can_sends.append(self.packer.make_can_msg("CRUISE_THROTTLE", 2, make_throttle_values(CS.cruise_throttle_msg, button)))
 
     # TODO: Find better way to cancel!
     # For some reason spamming the cancel button is unreliable on the Leaf

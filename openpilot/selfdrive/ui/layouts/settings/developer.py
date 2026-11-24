@@ -3,13 +3,14 @@ from collections.abc import Callable
 from openpilot.common.params import Params, UnknownKeyName
 from openpilot.starpilot.longitudinal.enhanced_stop_hold import KEY as HOLD_KEY, LABEL as HOLD_LABEL, DESCRIPTION as HOLD_DESCRIPTION
 from openpilot.starpilot.car.hyundai.aol import ioniq6_alpha_long_available
+from openpilot.starpilot.car.nissan.icbm_settings import ICBM_DESCRIPTION, ICBM_KEY, ICBM_TITLE, read_mode as read_icbm_mode
 from openpilot.starpilot.car.ford.longitudinal_preferences import release_long_available as ford_release_long_available
 from opendbc.car.volkswagen.meb_modes import MEB_CARS, settings_capable as meb_settings_capable
 from openpilot.starpilot.car.volkswagen.preferences import stock_long_requested
 from openpilot.selfdrive.ui.widgets.ssh_key import ssh_key_item
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.system.ui.widgets import Widget
-from openpilot.system.ui.widgets.list_view import button_item, toggle_item
+from openpilot.system.ui.widgets.list_view import button_item, multiple_button_item, toggle_item
 from openpilot.system.ui.widgets.scroller_tici import Scroller
 from openpilot.system.ui.widgets.confirm_dialog import ConfirmDialog
 from openpilot.system.ui.lib.application import gui_app
@@ -114,6 +115,13 @@ class DeveloperLayout(Widget):
       initial_state=self._propilot_long_enabled(),
       callback=self._on_propilot_long_debug,
     )
+    self._icbm_selector = multiple_button_item(
+      lambda: tr(ICBM_TITLE),
+      lambda: tr(ICBM_DESCRIPTION),
+      [lambda: tr("Off"), lambda: tr("Watch Only"), lambda: tr("Active")],
+      self._icbm_mode(), callback=self._on_icbm_mode,
+    )
+    self._icbm_selector.action_item.set_enabled(ui_state.is_offroad)
     self._on_enable_ui_debug(self._params.get_bool("ShowDebugInfo"))
 
     self._cellular_disabled_toggle = toggle_item(
@@ -136,6 +144,7 @@ class DeveloperLayout(Widget):
       self._always_hold_toggle,
       self._ui_debug_toggle,
       self._propilot_long_toggle,
+      self._icbm_selector,
       self._cellular_disabled_toggle,
     ], line_separator=True, spacing=0)
 
@@ -198,6 +207,23 @@ class DeveloperLayout(Widget):
       value = (not stock_long_requested(self._params) if key == "AlphaLongitudinalEnabled" and meb_settings_capable(ui_state.CP)
                else raw)
       item.action_item.set_state(value)
+
+    icbm_selector = getattr(self, "_icbm_selector", None)
+    if icbm_selector is not None:
+      icbm_selector.action_item.set_selected_button(self._icbm_mode())
+
+  def _icbm_mode(self) -> int:
+    return read_icbm_mode(self._params)
+
+  def _on_icbm_mode(self, index: int):
+    if not ui_state.is_offroad() or type(index) is not int or not 0 <= index <= 2:
+      self._icbm_selector.action_item.set_selected_button(self._icbm_mode())
+      return
+    try:
+      self._params.put(ICBM_KEY, index, block=True)
+    except UnknownKeyName:
+      pass
+    self._icbm_selector.action_item.set_selected_button(self._icbm_mode())
 
   def _on_always_hold(self, state: bool):
     if ui_state.is_offroad():

@@ -400,6 +400,8 @@ class Car:
     self.vehicle_startup.finalize_aol_configuration(self.CI)
     from openpilot.starpilot.car.hyundai.redneck_cruise import configure
     self.redneck_cruise = configure(self, subscribed_services)
+    from openpilot.starpilot.car.nissan.icbm import configure as configure_rogue_icbm
+    self.rogue_icbm = configure_rogue_icbm(self, subscribed_services)
     self.learning_stamp_observer = None
     self.learning_send_mono_ns = self.learning_send_committed_mono_ns = 0
     self.learning_car_state_source_ns = 0
@@ -1180,6 +1182,13 @@ class Car:
           companion = messaging.new_message('starpilotCarState', valid=bool(cs_send.valid), logMonoTime=int(cs_send.logMonoTime))
         companion.starpilotCarState.sourceCarStateMonoTime = int(cs_send.logMonoTime)
         fill_propilot_long(companion.starpilotCarState, obs)
+      icbm = getattr(self.CI.CC, 'icbm', None) if getattr(self, 'rogue_icbm', None) is not None else None
+      if icbm is not None:
+        from openpilot.starpilot.car.nissan.icbm import fill_rogue_icbm
+        if companion is None:
+          companion = messaging.new_message('starpilotCarState', valid=bool(cs_send.valid), logMonoTime=int(cs_send.logMonoTime))
+          companion.starpilotCarState.sourceCarStateMonoTime = int(cs_send.logMonoTime)
+        fill_rogue_icbm(companion.starpilotCarState, icbm.status)
     self.car_gps_publisher.update(self.CI.CS, self.pm, companion)
     self.pm.send('carState', cs_send)
     if getattr(self, 'learning_stamp_observer', None) is not None:
@@ -1917,6 +1926,8 @@ class Car:
         subaru_aol.sync_legacy_card_lateral(self, CS, CC)
       if getattr(self, "redneck_cruise", None):
         self.redneck_cruise.update(self, CS, CC, now_nanos)
+      if getattr(self, "rogue_icbm", None):
+        self.rogue_icbm.update(self, CS, CC, now_nanos)
       self.last_actuators_output, can_sends = self.CI.apply(CC, now_nanos)
       self.publish_sendcan(can_sends, valid=CS.canValid)
       if learning_snapshot is not None and self.learning_send_committed_mono_ns:

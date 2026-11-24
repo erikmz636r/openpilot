@@ -340,6 +340,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"UnlockDoors", {PERSISTENT, BOOL, "0"}},
     {"ShowDebugInfo", {PERSISTENT, BOOL}},
     {"NissanProPilotLongDebug", {PERSISTENT, BOOL, "0"}},  // Rogue ProPILOT longitudinal overlay. Display only.
+    {"NissanRogueIcbmMode", {PERSISTENT, INT, "0"}},  // Rogue cruise-button control: 0 Off, 1 Watch only, 2 Active. Read at car start.
     {"DeveloperSidebar", {PERSISTENT, BOOL, "0"}},
     {"ShowBrakeStatus", {PERSISTENT, BOOL, "0"}},
     {"HideDMIcon", {PERSISTENT, BOOL, "0"}},

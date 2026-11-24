@@ -1014,6 +1014,16 @@ EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
   EventName.userBookmarkNotPaired: {
     ET.PERMANENT: NormalPermanentAlert("Bookmark Saved", "pair to connect\nto view", duration=1.5),
   },
+
+  # Rogue cruise-button control gave up (taps not confirmed or set speed changed unexpectedly).
+  # ProPILOT keeps running at its current set speed; re-engage to let it try again.
+  EventName.rogueIcbmStopped: {
+    ET.WARNING: Alert(
+      "Cruise Button Control Stopped",
+      "Check set speed. Re-engage to resume",
+      AlertStatus.userPrompt, AlertSize.mid,
+      Priority.LOW, VisualAlert.none, AudibleAlert.prompt, 3.),
+  },
 }
 
 

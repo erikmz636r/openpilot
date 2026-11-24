@@ -29,6 +29,8 @@ class CarControllerParams:
 
 class NissanSafetyFlags(IntFlag):
   ALT_EPS_BUS = 1
+  # Rogue cruise-button management (opt-in). Must match NISSAN_PARAM_ICBM in safety/modes/nissan_icbm.h.
+  ICBM = 0x100
 
 
 class Footnote(Enum):

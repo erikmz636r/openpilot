@@ -749,6 +749,15 @@ class SelfdriveD:
     if (planner_fcw or model_fcw) and not self.CP.notCar:
       self.events.add(EventName.fcw)
 
+    # Rogue cruise-button control fault (published by card in starpilotCarState.rogueIcbm)
+    if self.CP.carFingerprint == "NISSAN_ROGUE" and self.sm.recv_frame['starpilotCarState'] > 0 and \
+       (self.sm.frame - self.sm.recv_frame['starpilotCarState']) * DT_CTRL < 0.5:
+      try:
+        if self.sm['starpilotCarState'].rogueIcbm.alert:
+          self.events.add(EventName.rogueIcbmStopped)
+      except Exception:
+        pass
+
     # GPS checks
     gps_ok = self.sm.recv_frame[self.gps_location_service] > 0 and (self.sm.frame - self.sm.recv_frame[self.gps_location_service]) * DT_CTRL < 2.0
     gps_ok = gps_ok or gps_observation(self.sm, 'starpilotCarState', time.monotonic_ns()) is not None
