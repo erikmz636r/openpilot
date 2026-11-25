@@ -125,7 +125,8 @@ class DeveloperLayout(Widget):
     self._icbm_selector.action_item.set_enabled(ui_state.is_offroad)
     self._icbm_feature_toggles = {}
     for key, title, desc in ((icbm_s.ICBM_LIMIT_KEY, icbm_s.ICBM_LIMIT_TITLE, icbm_s.ICBM_LIMIT_DESCRIPTION),
-                             (icbm_s.ICBM_STOPS_KEY, icbm_s.ICBM_STOPS_TITLE, icbm_s.ICBM_STOPS_DESCRIPTION)):
+                             (icbm_s.ICBM_STOPS_KEY, icbm_s.ICBM_STOPS_TITLE, icbm_s.ICBM_STOPS_DESCRIPTION),
+                             (icbm_s.ICBM_HOLD_KEY, icbm_s.ICBM_HOLD_TITLE, icbm_s.ICBM_HOLD_DESCRIPTION)):
       self._icbm_feature_toggles[key] = toggle_item(
         lambda title=title: tr(title), description=lambda desc=desc: tr(desc),
         initial_state=self._icbm_bool(key), callback=lambda state, key=key: self._on_icbm_bool(key, state),

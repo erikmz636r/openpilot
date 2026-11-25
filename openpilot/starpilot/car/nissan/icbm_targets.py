@@ -182,3 +182,53 @@ class StopPlanner:
       self.target_mph = min(self.target_mph, max(raw, self.target_mph - DOWN_MPH_S * 0.05)) if math.isfinite(self.target_mph) \
         else max(raw, v * MS_TO_MPH - 2.0)
     return self.target_mph if self.active else math.inf
+
+
+# ---------------------------------------------------------------- hold RES+ while slowing ahead
+HOLD_PLAN_RATIO = 0.7          # model plans to end below 70% of its current speed (1 s mean) ...
+HOLD_PLAN_WINDOW = 20          # ... over this many model frames (20 Hz -> 1 s; single frames flicker)
+HOLD_DECEL = -0.5              # m/s^2 carState.aEgo: ProPILOT is braking
+HOLD_LEAD_DIST_M = 60.0        # a car ahead this close ...
+HOLD_LEAD_CLOSING_MS = -1.5    # ... closing faster than this (radarState vRel, vision: noisy) ...
+HOLD_LEAD_TTC_S = 6.0          # ... and reached within this long (following at 55 m, -1 m/s is not "closing in")
+HOLD_LEAD_PROB = 0.5
+HOLD_RELEASE_S = 1.5           # all clear this long -> RES+ allowed again
+
+
+class HoldPlanner:
+  """No RES+ while the car is slowing for something ahead (drive 5: a curve / limit target ending on
+  the approach to a red light and behind a stopping car raised the set speed 14 mph each time).
+  Only ever blocks taps up; it never asks for a lower set speed."""
+
+  def __init__(self):
+    self.ends: list[float] = []
+    self.starts: list[float] = []
+    self.hold = False
+    self.clear_since = 0
+    self.reason = ""
+
+  def observe_model(self, model) -> None:
+    vx = list(model.velocity.x)
+    if len(vx) >= 2 and math.isfinite(float(vx[0])) and math.isfinite(float(vx[-1])):
+      self.starts.append(float(vx[0]))
+      self.ends.append(float(vx[-1]))
+      del self.starts[:-HOLD_PLAN_WINDOW], self.ends[:-HOLD_PLAN_WINDOW]
+
+  def update(self, now: int, a_ego: float, model_ok: bool, lead) -> bool:
+    if not model_ok:
+      self.starts.clear()
+      self.ends.clear()
+    plan = (len(self.ends) >= HOLD_PLAN_WINDOW // 2 and sum(self.starts) > 1.0 and
+            sum(self.ends) < HOLD_PLAN_RATIO * sum(self.starts))
+    braking = math.isfinite(a_ego) and a_ego < HOLD_DECEL
+    closing = (lead is not None and bool(lead.present) and float(lead.modelProb) > HOLD_LEAD_PROB and
+               float(lead.dRel) < HOLD_LEAD_DIST_M and float(lead.vRel) < HOLD_LEAD_CLOSING_MS and
+               float(lead.dRel) < -float(lead.vRel) * HOLD_LEAD_TTC_S)
+    if plan or braking or closing:
+      self.hold, self.clear_since = True, 0
+      self.reason = "plan" if plan else ("braking" if braking else "lead")
+    elif self.hold:
+      self.clear_since = self.clear_since or now
+      if now - self.clear_since >= HOLD_RELEASE_S * 1e9:
+        self.hold, self.clear_since, self.reason = False, 0, ""
+    return self.hold

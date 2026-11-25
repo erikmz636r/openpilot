@@ -245,11 +245,12 @@ struct StarPilotCarState @0xf35cc4560bbf6ec2 {
     alert @13 :Bool;
     sending @14 :Bool;
     speedScale @15 :Float32;     # car-scale speed / vEgo used for set-speed comparisons
-    features @16 :UInt8;         # 2 speed limit, 4 stops (Active only; bit 1 reserved)
+    features @16 :UInt8;         # 2 speed limit, 4 stops, 8 hold while slowing (Active only; bit 1 reserved)
     curveTargetMph @17 :Float32; # per-source targets, 0 = none
     limitTargetMph @18 :Float32;
     stopTargetMph @19 :Float32;
     limitMph @20 :UInt8;         # posted limit in use (0 = unknown)
+    holdUp @21 :Bool;            # hold-while-slowing feature is blocking RES+ taps right now
   }
 
   struct ProPilotLong {

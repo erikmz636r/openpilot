@@ -9,9 +9,9 @@ import math
 
 import numpy as np
 
-from openpilot.starpilot.car.nissan.icbm_settings import (FEATURE_LIMIT, FEATURE_STOPS, ICBM_ACTIVE, ICBM_OFF,
-                                                        ICBM_WATCH, read_features, read_limit_offset, read_mode)
-from openpilot.starpilot.car.nissan.icbm_targets import LIMIT_FRESH_NS, LimitPlanner, SpeedScale, StopPlanner
+from openpilot.starpilot.car.nissan.icbm_settings import (FEATURE_HOLD, FEATURE_LIMIT, FEATURE_STOPS, ICBM_ACTIVE,
+                                                        ICBM_OFF, ICBM_WATCH, read_features, read_limit_offset, read_mode)
+from openpilot.starpilot.car.nissan.icbm_targets import LIMIT_FRESH_NS, HoldPlanner, LimitPlanner, SpeedScale, StopPlanner
 
 MS_TO_MPH = 2.2369362920544
 
@@ -146,15 +146,15 @@ def disable(card, where: str) -> None:
 
 
 class IcbmRuntime:
-  """features: bitmask of opt-in extras (FEATURE_LIMIT / FEATURE_STOPS), Active only."""
+  """features: bitmask of opt-in extras (FEATURE_LIMIT / FEATURE_STOPS / FEATURE_HOLD), Active only."""
 
   def __init__(self, mode: int, sm=None, features: int = 0, limit_offset_mph: int = 0):
-    self.features = int(features) & (FEATURE_LIMIT | FEATURE_STOPS)
+    self.features = int(features) & (FEATURE_LIMIT | FEATURE_STOPS | FEATURE_HOLD)
     if sm is None:
       from openpilot.cereal import messaging
       services = ['modelV2']
-      if self.features & FEATURE_STOPS:
-        services.append('radarState')  # only to tell a red light from a car stopped ahead
+      if self.features & (FEATURE_STOPS | FEATURE_HOLD):
+        services.append('radarState')  # red light vs a car stopped ahead; car closing in (hold)
       if self.features & FEATURE_LIMIT:
         services.append('slcState')
       sm = messaging.SubMaster(services)
@@ -164,6 +164,7 @@ class IcbmRuntime:
     self.scale = SpeedScale()
     self.limit = LimitPlanner(limit_offset_mph)
     self.stops = StopPlanner()
+    self.hold = HoldPlanner()
     self.stop_t = math.inf
     self.prev_car_set = 0
 
@@ -221,6 +222,13 @@ class IcbmRuntime:
           st.limit_mph = int(self.limit.limit)
           extra = min(extra, lim_t)
         st.stop_target_mph = _finite_or0(self.stop_t) if self.features & FEATURE_STOPS else 0.0
+        if self.features & FEATURE_HOLD:
+          if model_ok and model_new:
+            self.hold.observe_model(model)
+          radar_ok = self._fresh('radarState', now, MODEL_MAX_AGE_NS)
+          lead = self.sm['radarState'].leadOne if radar_ok else None
+          # No usable model: hold too (the target is None then and the controller holds anyway).
+          controller.set_hold_up(self.hold.update(now, float(cs.aEgo), model_ok, lead) or not model_ok)
         # Extras only act with a usable model too (same freshness gate as curves).
         if target is not None:
           target = min(target, extra)
@@ -302,3 +310,4 @@ def fill_rogue_icbm(state, status) -> None:
   msg.limitTargetMph = finite(getattr(status, "limit_target_mph", 0.0))
   msg.stopTargetMph = finite(getattr(status, "stop_target_mph", 0.0))
   msg.limitMph = max(0, min(int(getattr(status, "limit_mph", 0)), 255))
+  msg.holdUp = bool(getattr(status, "hold_up", False))

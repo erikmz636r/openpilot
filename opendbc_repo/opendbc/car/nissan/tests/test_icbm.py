@@ -372,3 +372,26 @@ def test_winding_road_brief_gap_between_bends_no_res():
   car.run(2.0, target=float('inf'))
   car.run(4, target=50)
   assert car.presses("RES_BUTTON") == 0
+
+
+def test_hold_up_blocks_res_but_not_set():
+  car = FakeRogue(MODE_ACTIVE, set_mph=60, v_mph=60.0)
+  settle(car)
+  car.run(4.0, target=50.0)
+  assert car.set_mph == 50
+  # Curve ends while the car is slowing for something ahead: no RES+ while held.
+  car.icbm.set_hold_up(True)
+  assert car.icbm.status.hold_up
+  car.run(8.0, target=float('inf'))
+  assert car.set_mph == 50 and car.presses("RES_BUTTON") == 0
+  # SET- is never blocked by the hold.
+  car.run(3.0, target=45.0)
+  assert car.set_mph == 45
+  # Cleared: back up to the driver's speed.
+  car.icbm.set_hold_up(False)
+  car.run(10.0, target=float('inf'))
+  assert car.set_mph == 60 and car.presses("RES_BUTTON") == 15
+
+
+def test_hold_up_default_off():
+  assert IcbmController(mode=MODE_ACTIVE).hold_up is False

@@ -62,12 +62,14 @@ def test_fill_rogue_icbm_handles_inf_and_round_trips():
   ctl.status.desired_mph = float('nan')
   ctl.status.direction = -1
   ctl.status.fault_reason = 'x' * 500
+  ctl.set_hold_up(True)
   sp = custom.StarPilotCarState.new_message()
   rt.fill_rogue_icbm(sp, ctl.status)
   with custom.StarPilotCarState.from_bytes(sp.to_bytes()) as out:
     out = out.as_builder()
   assert out.rogueIcbm.mode == MODE_WATCH and out.rogueIcbm.targetMph == 0.0 and out.rogueIcbm.direction == -1
   assert len(out.rogueIcbm.faultReason) <= 120
+  assert out.rogueIcbm.holdUp
 
 
 def test_configure_never_raises():

@@ -17,10 +17,11 @@ ICBM_MICI_DESCRIPTION = (
   "SET- before curves and RES+ back to your set speed, never above it, never under 20 mph. Change while parked."
 )
 
-FEATURE_LIMIT, FEATURE_STOPS = 2, 4  # bit 1 reserved (slower-car-ahead, not shipped)
+FEATURE_LIMIT, FEATURE_STOPS, FEATURE_HOLD = 2, 4, 8  # bit 1 reserved (slower-car-ahead, not shipped)
 ICBM_LIMIT_KEY = "NissanRogueIcbmSpeedLimit"
 ICBM_LIMIT_OFFSET_KEY = "NissanRogueIcbmSpeedLimitOffset"
 ICBM_STOPS_KEY = "NissanRogueIcbmStops"
+ICBM_HOLD_KEY = "NissanRogueIcbmHoldSlowing"
 ICBM_LIMIT_OFFSETS = (0, 3, 5, 7, 10)
 ICBM_NOTE = " Needs Rogue Cruise Button Control set to Active. Never above your set speed, never below 20 mph. Change only while parked."
 ICBM_LIMIT_TITLE = "Rogue Cruise Buttons: Speed Limit"
@@ -34,8 +35,14 @@ ICBM_STOPS_TITLE = "Rogue Cruise Buttons: Red Lights / Stops"
 ICBM_STOPS_DESCRIPTION = (
   "When the driving model plans to stop ahead with no car in front (red light, stop sign), it taps SET- early so "
   "ProPILOT eases off toward 20 mph. It cannot stop the car: you brake." + ICBM_NOTE)
+ICBM_HOLD_TITLE = "Rogue Cruise Buttons: No RES While Slowing"
+ICBM_HOLD_DESCRIPTION = " ".join((
+  "While ProPILOT is braking, the driving model plans to slow down (red light, stop sign, traffic), or a car ahead",
+  "is closing in, openpilot never taps RES+ to raise your set speed back up; it waits until that has cleared. It only",
+  "holds taps back: it never taps SET-, never brakes, never fakes a car.")) + ICBM_NOTE
 ICBM_LIMIT_MICI_TITLE = "rogue: speed limit"
 ICBM_STOPS_MICI_TITLE = "rogue: lights / stops"
+ICBM_HOLD_MICI_TITLE = "rogue: no RES while slowing"
 ICBM_MICI_NOTE = " Active mode only. Change while parked."
 
 
@@ -48,7 +55,8 @@ def _get_bool(params, key) -> bool:
 
 def read_features(params) -> int:
   return ((FEATURE_LIMIT if _get_bool(params, ICBM_LIMIT_KEY) else 0) |
-          (FEATURE_STOPS if _get_bool(params, ICBM_STOPS_KEY) else 0))
+          (FEATURE_STOPS if _get_bool(params, ICBM_STOPS_KEY) else 0) |
+          (FEATURE_HOLD if _get_bool(params, ICBM_HOLD_KEY) else 0))
 
 
 def read_limit_offset(params) -> int:

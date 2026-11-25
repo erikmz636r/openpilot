@@ -344,6 +344,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"NissanRogueIcbmSpeedLimit", {PERSISTENT, BOOL, "0"}},  // Rogue cruise buttons: lower set speed to the posted limit. Active only.
     {"NissanRogueIcbmSpeedLimitOffset", {PERSISTENT, INT, "0"}},  // mph added to the posted limit (0..10).
     {"NissanRogueIcbmStops", {PERSISTENT, BOOL, "0"}},  // Rogue cruise buttons: ease off toward 20 mph for a model stop ahead. Active only.
+    {"NissanRogueIcbmHoldSlowing", {PERSISTENT, BOOL, "0"}},  // Rogue cruise buttons: no RES+ taps while slowing for a stop or a car ahead. Active only.
     {"DeveloperSidebar", {PERSISTENT, BOOL, "0"}},
     {"ShowBrakeStatus", {PERSISTENT, BOOL, "0"}},
     {"HideDMIcon", {PERSISTENT, BOOL, "0"}},

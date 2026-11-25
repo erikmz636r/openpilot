@@ -128,7 +128,8 @@ class Status:
   limit_target_mph: float = 0.0
   stop_target_mph: float = 0.0
   limit_mph: int = 0
-  features: int = 0             # 2 speed limit, 4 stops (bit 1 reserved)
+  features: int = 0             # 2 speed limit, 4 stops, 8 hold-while-slowing (bit 1 reserved)
+  hold_up: bool = False         # runtime says the car is slowing for something ahead: no RES+ taps now
 
 
 def throttle_driver_input(t: dict) -> bool:
@@ -193,6 +194,13 @@ class IcbmController:
     # vEgo (wheel speeds) reads ~12% under the car's own speed scale on the Rogue (set speed, cluster,
     # model). Every comparison of actual speed with a set speed uses v_ego * speed_scale.
     self.speed_scale = 1.0
+    # Opt-in (runtime feature): while ProPILOT / the model is slowing for something ahead, never tap
+    # RES+ (a curve or limit ending right then must not raise the set speed into a stop or a car).
+    self.hold_up = False
+
+  def set_hold_up(self, hold: bool) -> None:
+    self.hold_up = bool(hold)
+    self.status.hold_up = self.hold_up
 
   def set_speed_scale(self, scale: float) -> None:
     s = float(scale)
@@ -417,6 +425,8 @@ class IcbmController:
       direction = 0  # the car's set speed changed without us: never tap over it while that is checked
     if direction > 0 and current >= self.ceiling:
       direction = 0
+    if direction > 0 and self.hold_up:
+      direction = 0  # slowing for something ahead: keep the set speed, go back up once it clears
 
     st.state = State.DECREASING if direction < 0 else (State.INCREASING if direction > 0 else State.HOLDING)
     self.pending_tap = direction if ready and self.tap is None else 0

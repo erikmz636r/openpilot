@@ -5,7 +5,7 @@ from types import SimpleNamespace as NS
 from opendbc.car.nissan.icbm import IcbmController, MODE_ACTIVE, MODE_WATCH
 import openpilot.starpilot.car.nissan.icbm as rt
 from openpilot.starpilot.car.nissan import icbm_settings as S
-from openpilot.starpilot.car.nissan.icbm_targets import LimitPlanner, SpeedScale, StopPlanner, MS_TO_MPH
+from openpilot.starpilot.car.nissan.icbm_targets import HoldPlanner, LimitPlanner, SpeedScale, StopPlanner, MS_TO_MPH
 
 SEC = 1_000_000_000
 DT = 50_000_000  # 20 Hz
@@ -169,6 +169,7 @@ def test_features_default_off_and_offset_validated():
   assert S.read_features(Params({})) == 0
   assert S.read_features(Params({S.ICBM_LIMIT_KEY: True, S.ICBM_STOPS_KEY: True})) == S.FEATURE_LIMIT | S.FEATURE_STOPS
   assert S.read_features(Params({"NissanRogueIcbmLead": True})) == 0  # not shipped
+  assert S.read_features(Params({S.ICBM_HOLD_KEY: True})) == S.FEATURE_HOLD == 8
   assert S.read_limit_offset(Params({S.ICBM_LIMIT_OFFSET_KEY: 5})) == 5
   assert S.read_limit_offset(Params({S.ICBM_LIMIT_OFFSET_KEY: 4})) == 0
   assert S.read_limit_offset(Params({S.ICBM_LIMIT_OFFSET_KEY: "x"})) == 0
@@ -183,7 +184,7 @@ def test_features_only_in_active(monkeypatch):
   import openpilot.cereal.messaging as messaging
   monkeypatch.setattr(messaging, 'SubMaster', lambda services: NS(services=services))
   from opendbc.car.structs import CarParams
-  allp = {S.ICBM_LIMIT_KEY: True, S.ICBM_STOPS_KEY: True}
+  allp = {S.ICBM_LIMIT_KEY: True, S.ICBM_STOPS_KEY: True, S.ICBM_HOLD_KEY: True}
 
   def card(mode):
     cp = CarParams(carFingerprint="NISSAN_ROGUE", pcmCruise=True)
@@ -192,7 +193,7 @@ def test_features_only_in_active(monkeypatch):
   r = rt.configure(card(S.ICBM_WATCH), [])
   assert r is not None and r.features == 0 and r.sm.services == ['modelV2']
   r = rt.configure(card(S.ICBM_ACTIVE), [])
-  assert r is not None and r.features == 6 and set(r.sm.services) == {'modelV2', 'radarState', 'slcState'}
+  assert r is not None and r.features == 14 and set(r.sm.services) == {'modelV2', 'radarState', 'slcState'}
 
 
 class SM:
@@ -240,3 +241,94 @@ def test_runtime_extras_error_turns_everything_off():
   card.rogue_icbm = runtime
   runtime.update(card, NS(vEgo=29.0), None, SEC + DT)
   assert card.rogue_icbm is None and cc.icbm.mode == 0
+
+
+# ------------------------------------------------------------------ hold RES+ while slowing ahead
+def plan(v0, v_end):
+  return NS(velocity=NS(x=[v0, (v0 + v_end) / 2, v_end]))
+
+
+def rlead(d, v_rel, prob=0.99, present=True):
+  return NS(present=present, modelProb=prob, dRel=d, vRel=v_rel)
+
+
+def run_hold(h, n, model=None, a=0.0, ld=None, t0=SEC, ok=True):
+  t = t0
+  out = False
+  for _ in range(n):
+    t += DT
+    if model is not None and ok:
+      h.observe_model(model)
+    out = h.update(t, a, ok, ld)
+  return out, t
+
+
+def test_hold_on_model_slowdown_with_release():
+  h = HoldPlanner()
+  held, t = run_hold(h, 40, plan(17.0, 16.0))
+  assert not held  # cruising
+  held, t = run_hold(h, 20, plan(17.0, 4.0), t0=t)
+  assert held and h.reason == "plan"
+  held, t = run_hold(h, 25, plan(17.0, 17.0), t0=t)  # 1 s mean recovers after ~0.6 s, then 1.5 s release
+  assert held
+  held, t = run_hold(h, 40, plan(17.0, 17.0), t0=t)
+  assert not held
+
+
+def test_hold_single_frame_flicker_ignored():
+  h = HoldPlanner()
+  held, t = run_hold(h, 40, plan(17.0, 17.0))
+  for _ in range(5):  # one bad frame a second (drive 5 plans alternate like this)
+    h.observe_model(plan(17.0, 3.0))
+    held, t = run_hold(h, 19, plan(17.0, 17.0), t0=t)
+    assert not held
+
+
+def test_hold_on_braking_and_closing_lead_only():
+  h = HoldPlanner()
+  assert run_hold(h, 2, plan(17.0, 17.0), a=-0.8)[0] and h.reason == "braking"
+  h = HoldPlanner()
+  assert run_hold(h, 2, plan(17.0, 17.0), ld=rlead(25.0, -5.0))[0] and h.reason == "lead"
+  for ld in (rlead(25.0, 0.2), rlead(55.0, -1.1), rlead(40.0, -3.0), rlead(90.0, -20.0), rlead(25.0, -5.0, prob=0.3),
+             rlead(25.0, -5.0, present=False), None):
+    h = HoldPlanner()
+    assert not run_hold(h, 40, plan(17.0, 17.0), a=-0.2, ld=ld)[0]
+
+
+def test_hold_no_model_clears_window():
+  h = HoldPlanner()
+  run_hold(h, 20, plan(17.0, 4.0))
+  held, t = run_hold(h, 60, ok=False)
+  assert not held and h.ends == []
+
+
+def test_runtime_hold_only_blocks_res_and_never_sets_target():
+  cc = NS(icbm=IcbmController(mode=MODE_ACTIVE))
+  card = NS(CI=NS(CC=cc), rogue_icbm=None)
+  radar = NS(leadOne=rlead(20.0, -4.0))
+  runtime = rt.IcbmRuntime(MODE_ACTIVE, sm=SM({'modelV2': straight_model(29.0), 'radarState': radar}, SEC),
+                           features=S.FEATURE_HOLD)
+  card.rogue_icbm = runtime
+  now = SEC
+  for _ in range(20):
+    now += DT
+    runtime.sm.logMonoTime = dict.fromkeys(runtime.sm.logMonoTime, now)
+    runtime.update(card, NS(vEgo=29.0, aEgo=0.0), None, now)
+  assert card.rogue_icbm is runtime and cc.icbm.hold_up and cc.icbm.status.hold_up
+  assert math.isinf(cc.icbm.target_mph)  # no slow-down asked for
+  radar.leadOne = rlead(30.0, 0.5)
+  for _ in range(40):
+    now += DT
+    runtime.sm.logMonoTime = dict.fromkeys(runtime.sm.logMonoTime, now)
+    runtime.update(card, NS(vEgo=29.0, aEgo=0.0), None, now)
+  assert not cc.icbm.hold_up
+
+
+def test_runtime_without_hold_feature_never_holds():
+  cc = NS(icbm=IcbmController(mode=MODE_ACTIVE))
+  card = NS(CI=NS(CC=cc), rogue_icbm=None)
+  runtime = rt.IcbmRuntime(MODE_ACTIVE, sm=SM({'modelV2': straight_model(29.0), 'radarState': NS(leadOne=rlead(30.0, -4.0))}, SEC),
+                           features=S.FEATURE_STOPS)
+  card.rogue_icbm = runtime
+  runtime.update(card, NS(vEgo=29.0, aEgo=-2.0), None, SEC + DT)
+  assert card.rogue_icbm is runtime and not cc.icbm.hold_up

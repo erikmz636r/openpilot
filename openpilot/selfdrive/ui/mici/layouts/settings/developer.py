@@ -146,7 +146,9 @@ class DeveloperLayoutMici(NavScroller):
     self._icbm_feature_toggles = [
       BigParamControl(title, key, description=desc + icbm_s.ICBM_MICI_NOTE)
       for key, title, desc in ((icbm_s.ICBM_LIMIT_KEY, icbm_s.ICBM_LIMIT_MICI_TITLE, "Lowers set speed to the posted limit when known."),
-                               (icbm_s.ICBM_STOPS_KEY, icbm_s.ICBM_STOPS_MICI_TITLE, "Eases off toward 20 mph for a red light / stop ahead."))
+                               (icbm_s.ICBM_STOPS_KEY, icbm_s.ICBM_STOPS_MICI_TITLE, "Eases off toward 20 mph for a red light / stop ahead."),
+                               (icbm_s.ICBM_HOLD_KEY, icbm_s.ICBM_HOLD_MICI_TITLE,
+                                "No RES+ taps while braking or slowing for a stop or a car ahead."))
     ]
     for item in self._icbm_feature_toggles:
       item.set_enabled(lambda: ui_state.is_offroad())
